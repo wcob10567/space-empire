@@ -6,6 +6,7 @@ import Login from './pages/Login'
 import Overview from './pages/Overview'
 import GameLayout from './components/GameLayout'
 import Buildings from './pages/Buildings'
+import Research from './pages/Research'
 
 const TICK_INTERVAL = 5000 // update resources every 5 seconds locally
 
@@ -29,6 +30,7 @@ function Game() {
   const [planet, setPlanet] = useState(null)
   const [resources, setResources] = useState(null)
   const [buildings, setBuildings] = useState([])
+  const [research, setResearch] = useState([])
 
   // Production rates per hour
   const getProduction = useCallback((buildings) => {
@@ -69,6 +71,12 @@ function Game() {
         .select('*')
         .eq('planet_id', planetData.id)
       if (bldData) setBuildings(bldData)
+      
+      const { data: resData2 } = await supabase
+        .from('research')
+        .select('*')
+        .eq('owner_id', user.id)
+      if (resData2) setResearch(resData2)
     }
     loadGameData()
   }, [user])
@@ -99,6 +107,8 @@ function Game() {
         return <Overview planet={planet} resources={resources} buildings={buildings} />
       case 'buildings':
         return <Buildings planet={planet} resources={resources} buildings={buildings} setBuildings={setBuildings} setResources={setResources} />
+      case 'research':
+        return <Research planet={planet} resources={resources} buildings={buildings} research={research} setResearch={setResearch} />
       default:
         return (
           <div className="flex items-center justify-center h-64">
