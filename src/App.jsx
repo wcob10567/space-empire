@@ -9,6 +9,8 @@ import Buildings from './pages/Buildings'
 import Research from './pages/Research'
 import Shipyard from './pages/Shipyard'
 import Galaxy from './pages/Galaxy'
+import Fleet from './pages/Fleet'
+import DevPanel from './components/DevPanel'
 
 const TICK_INTERVAL = 5000 // update resources every 5 seconds locally
 
@@ -122,7 +124,9 @@ function Game() {
         return <Shipyard planet={planet} resources={resources} buildings={buildings} research={research} ships={ships} setShips={setShips} setResources={setResources} />
       case 'galaxy':
         return <Galaxy planet={planet} />
-        default:
+      case 'fleet':
+        return <Fleet planet={planet} ships={ships} resources={resources} research={research} setShips={setShips} />
+      default:
         return (
           <div className="flex items-center justify-center h-64">
             <div className="text-center">
@@ -134,7 +138,7 @@ function Game() {
     }
   }
 
-  return (
+ return (
     <GameLayout
       activePage={activePage}
       setActivePage={setActivePage}
@@ -142,6 +146,17 @@ function Game() {
       planet={planet}
     >
       {renderPage()}
+      <DevPanel
+        planet={planet}
+        resources={resources}
+        buildings={buildings}
+        research={research}
+        ships={ships}
+        setResources={setResources}
+        setBuildings={setBuildings}
+        setResearch={setResearch}
+        setShips={setShips}
+      />
     </GameLayout>
   )
 }

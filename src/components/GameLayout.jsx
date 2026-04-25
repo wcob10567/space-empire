@@ -12,6 +12,7 @@ const NAV_ITEMS = [
   { id: 'shipyard',  label: 'Shipyard',  icon: Rocket },
   { id: 'galaxy',    label: 'Galaxy',    icon: Map },
   { id: 'reports',   label: 'Reports',   icon: FileText },
+  { id: 'fleet',     label: 'Fleet',     icon: Rocket },
 ]
 
 export default function GameLayout({ activePage, setActivePage, resources, planet, children }) {

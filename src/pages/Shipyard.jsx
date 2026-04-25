@@ -202,7 +202,8 @@ const CATEGORIES = ['Ships', 'Civil', 'Defense']
 function getBuildTime(cost, shipyardLvl, naniteLvl) {
   const base = (cost.metal + cost.crystal) / 2500
   const factor = Math.max(1, shipyardLvl) * Math.pow(2, naniteLvl ?? 0)
-  return Math.max(1, Math.floor(base / factor * 3600))
+  const speed = window.__devSpeed ?? 1
+  return Math.max(1, Math.floor(base / factor * 3600 * speed))
 }
 
 function formatTime(seconds) {

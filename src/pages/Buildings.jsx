@@ -149,7 +149,8 @@ function getUpgradeCost(building, currentLevel) {
 function getBuildTime(cost, roboticsLvl) {
   const base = (cost.metal + cost.crystal) / 2500
   const roboFactor = Math.max(1, 1 + roboticsLvl)
-  return Math.max(5, Math.floor(base / roboFactor * 3600))
+  const speed = import.meta.env.DEV ? (window.__devSpeed ?? 1) : 1
+  return Math.max(1, Math.floor(base / roboFactor * 3600 * speed))
 }
 
 function formatTime(seconds) {
@@ -266,6 +267,26 @@ export default function Buildings({ planet, resources, buildings, setBuildings, 
   const roboticsLvl = buildings?.find(b => b.building_type === 'robotics_factory')?.level ?? 0
   const anyUpgrading = buildings?.some(b => b.is_upgrading) ?? false
 
+  // On load, check if any upgrades already finished while page was closed
+  useEffect(() => {
+    if (!planet || !buildings?.length) return
+    async function checkCompleted() {
+      const now = new Date()
+      const completed = buildings.filter(b => b.is_upgrading && b.upgrade_complete_at && new Date(b.upgrade_complete_at) <= now)
+      for (const b of completed) {
+        await supabase.from('buildings').update({
+          level: b.level + 1,
+          is_upgrading: false,
+          upgrade_complete_at: null,
+        }).eq('id', b.id)
+        setBuildings(prev => prev.map(pb =>
+          pb.id === b.id ? { ...pb, level: pb.level + 1, is_upgrading: false, upgrade_complete_at: null } : pb
+        ))
+      }
+    }
+    checkCompleted()
+  }, [planet, buildings?.length])
+
   async function handleUpgrade(building, cost) {
     if (!planet || upgrading) return
     setUpgrading(true)
@@ -298,18 +319,26 @@ export default function Buildings({ planet, resources, buildings, setBuildings, 
     ))
 
     setTimeout(async () => {
-      const currentLvl = buildings.find(b => b.building_type === building.type)?.level ?? 0
-      await supabase.from('buildings').update({
-        level: currentLvl + 1,
-        is_upgrading: false,
-        upgrade_complete_at: null,
-      }).eq('planet_id', planet.id).eq('building_type', building.type)
+      const { data: updated } = await supabase
+        .from('buildings')
+        .select('*')
+        .eq('planet_id', planet.id)
+        .eq('building_type', building.type)
+        .single()
 
-      setBuildings(prev => prev.map(b =>
-        b.building_type === building.type
-          ? { ...b, level: b.level + 1, is_upgrading: false, upgrade_complete_at: null }
-          : b
-      ))
+      if (updated) {
+        await supabase.from('buildings').update({
+          level: updated.level + 1,
+          is_upgrading: false,
+          upgrade_complete_at: null,
+        }).eq('planet_id', planet.id).eq('building_type', building.type)
+
+        setBuildings(prev => prev.map(b =>
+          b.building_type === building.type
+            ? { ...b, level: updated.level + 1, is_upgrading: false, upgrade_complete_at: null }
+            : b
+        ))
+      }
       setUpgrading(false)
     }, buildTime * 1000)
   }

@@ -50,19 +50,20 @@ export function AuthProvider({ children }) {
     })
     if (profileError) throw profileError
 
-    // Create homeworld planet
-    const galaxy = Math.floor(Math.random() * 5) + 1
-    const system = Math.floor(Math.random() * 499) + 1
-    const position = Math.floor(Math.random() * 15) + 1
+   // Atomically claim a safe starting position
+    const { data: placement, error: placementError } = await supabase
+    .rpc('claim_starting_planet', {
+        player_id: data.user.id,
+        player_username: username,
+    })
+    if (placementError) throw placementError
 
-    const { data: planet, error: planetError } = await supabase.from('planets').insert({
-      owner_id: data.user.id,
-      name: `${username}'s Homeworld`,
-      galaxy,
-      system,
-      position,
-      is_homeworld: true,
-    }).select().single()
+    // Get the newly created planet
+    const { data: planet, error: planetError } = await supabase
+    .from('planets')
+    .select('*')
+    .eq('id', placement.planet_id)
+    .single()
     if (planetError) throw planetError
 
     // Create starting resources for homeworld
