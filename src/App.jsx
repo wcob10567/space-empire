@@ -8,6 +8,7 @@ import GameLayout from './components/GameLayout'
 import Buildings from './pages/Buildings'
 import Research from './pages/Research'
 import Shipyard from './pages/Shipyard'
+import Galaxy from './pages/Galaxy'
 
 const TICK_INTERVAL = 5000 // update resources every 5 seconds locally
 
@@ -119,7 +120,9 @@ function Game() {
         return <Research planet={planet} resources={resources} buildings={buildings} research={research} setResearch={setResearch} />
       case 'shipyard':
         return <Shipyard planet={planet} resources={resources} buildings={buildings} research={research} ships={ships} setShips={setShips} setResources={setResources} />
-      default:
+      case 'galaxy':
+        return <Galaxy planet={planet} />
+        default:
         return (
           <div className="flex items-center justify-center h-64">
             <div className="text-center">
