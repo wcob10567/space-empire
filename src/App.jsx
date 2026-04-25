@@ -5,6 +5,7 @@ import { supabase } from './lib/supabase'
 import Login from './pages/Login'
 import Overview from './pages/Overview'
 import GameLayout from './components/GameLayout'
+import Buildings from './pages/Buildings'
 
 const TICK_INTERVAL = 5000 // update resources every 5 seconds locally
 
@@ -96,6 +97,8 @@ function Game() {
     switch (activePage) {
       case 'overview':
         return <Overview planet={planet} resources={resources} buildings={buildings} />
+      case 'buildings':
+        return <Buildings planet={planet} resources={resources} buildings={buildings} setBuildings={setBuildings} setResources={setResources} />
       default:
         return (
           <div className="flex items-center justify-center h-64">
