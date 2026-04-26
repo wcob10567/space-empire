@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { Target, Search, Package, Send, Home } from 'lucide-react'
@@ -45,6 +45,17 @@ function getStarConfig(system) {
   return types[system % types.length]
 }
 
+// Tiny seeded PRNG (LCG). Pure function — same seed always produces the
+// same sequence, so the starfield is stable across renders AND identical
+// each time you visit the same system.
+function makeSeededRandom(seed) {
+  let s = (seed | 0) || 1
+  return () => {
+    s = (s * 1664525 + 1013904223) | 0
+    return ((s >>> 0) / 0xFFFFFFFF)
+  }
+}
+
 // ─── Intel helpers ───────────────────────────────────────────────────────────
 function formatAge(dateStr) {
   if (!dateStr) return ''
@@ -65,7 +76,7 @@ function shipPairs(obj) {
   return Object.entries(obj).filter(([k, v]) => k !== 'is_estimate' && v > 0)
 }
 
-function IntelPanel({ intel }) {
+function IntelCard({ planet, intel }) {
   const res = intel.resources_seen ?? {}
   const ships = intel.ships_seen
   const defenses = intel.defenses_seen
@@ -82,13 +93,16 @@ function IntelPanel({ intel }) {
   const researchEntries = research ? Object.entries(research).filter(([k]) => k !== 'is_estimate') : null
 
   return (
-    <div className="mb-3 bg-cyan-950/30 border border-cyan-900/40 rounded-lg p-2 space-y-1.5">
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-cyan-400 font-semibold flex items-center gap-1">
-          🔍 Intel
-          {resEst && <span className="text-[9px] text-yellow-500 font-normal">~estimate</span>}
-        </span>
-        <span className="text-[10px] text-gray-600">{formatAge(intel.last_scanned_at)}</span>
+    <div className="bg-cyan-950/30 border border-cyan-900/40 rounded-lg p-3 space-y-1.5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold text-cyan-400 truncate">🔍 {planet.name}</p>
+          <p className="text-[10px] text-gray-600 font-mono">
+            [{planet.galaxy}:{planet.system}:{planet.position}]
+            {resEst && <span className="text-yellow-500/80 ml-1 font-sans">~estimate</span>}
+          </p>
+        </div>
+        <span className="text-[10px] text-gray-500 shrink-0">{formatAge(intel.last_scanned_at)}</span>
       </div>
 
       {/* Resources */}
@@ -137,22 +151,136 @@ function IntelPanel({ intel }) {
         )}
       </div>
 
-      {/* Buildings + Research (compact, only if revealed) */}
-      {buildingEntries && buildingEntries.length > 0 && (
-        <div className="text-[10px] text-gray-400">
-          <span className="text-gray-500">Buildings: </span>
-          {buildingEntries.map(([t, lvl]) => `${t.replace(/_/g, ' ')} ${lvl}`).join(', ')}
+      {/* Buildings — always shown, with hidden message when tech-gated */}
+      <div className="text-[10px]">
+        <span className="text-gray-500">Buildings: </span>
+        {buildings ? (
+          buildingEntries && buildingEntries.length > 0 ? (
+            <span className="text-gray-400">
+              {buildingEntries.map(([t, lvl]) => `${t.replace(/_/g, ' ')} ${lvl}`).join(', ')}
+            </span>
+          ) : (
+            <span className="text-gray-600">None</span>
+          )
+        ) : (
+          <span className="text-gray-600 italic">hidden — need higher Espionage Tech</span>
+        )}
+      </div>
+
+      {/* Research — always shown, with hidden message when tech-gated */}
+      <div className="text-[10px]">
+        <span className="text-gray-500">Research: </span>
+        {research ? (
+          researchEntries && researchEntries.length > 0 ? (
+            <span className="text-gray-400">
+              {researchEntries.map(([t, lvl]) => `${t.replace(/_/g, ' ')} ${lvl}`).join(', ')}
+            </span>
+          ) : (
+            <span className="text-gray-600">None</span>
+          )
+        ) : (
+          <span className="text-gray-600 italic">hidden — need higher Espionage Tech</span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function BattleCard({ planet, combat }) {
+  const won = combat.won
+  const plundered = combat.plundered ?? {}
+  const myLossEntries = shipPairs(combat.attacker_losses)
+  const theirLossEntries = shipPairs(combat.defender_losses)
+  const debris = combat.debris ?? {}
+  const hasPlunder = (plundered.metal ?? 0) > 0 || (plundered.crystal ?? 0) > 0 || (plundered.deuterium ?? 0) > 0
+  const hasDebris = (debris.metal ?? 0) > 0 || (debris.crystal ?? 0) > 0
+
+  return (
+    <div className={`border rounded-lg p-3 space-y-1.5 ${won ? 'bg-green-950/30 border-green-900/40' : 'bg-red-950/30 border-red-900/40'}`}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className={`text-xs font-semibold truncate ${won ? 'text-green-400' : 'text-red-400'}`}>
+            {won ? '⚔️ Victory' : '💀 Defeat'} · {planet.name}
+          </p>
+          <p className="text-[10px] text-gray-600 font-mono">
+            [{planet.galaxy}:{planet.system}:{planet.position}]
+          </p>
+        </div>
+        <span className="text-[10px] text-gray-500 shrink-0">{formatAge(combat.last_combat_at)}</span>
+      </div>
+
+      {won && hasPlunder && (
+        <div className="text-[11px] text-yellow-300">
+          Plundered: ⛏️{Math.floor(plundered.metal ?? 0).toLocaleString()} 💎{Math.floor(plundered.crystal ?? 0).toLocaleString()} 🔵{Math.floor(plundered.deuterium ?? 0).toLocaleString()}
         </div>
       )}
-      {researchEntries && researchEntries.length > 0 && (
-        <div className="text-[10px] text-gray-400">
-          <span className="text-gray-500">Research: </span>
-          {researchEntries.map(([t, lvl]) => `${t.replace(/_/g, ' ')} ${lvl}`).join(', ')}
+
+      <div className="text-[10px] flex flex-wrap gap-x-3">
+        <span>
+          <span className="text-gray-500">You: </span>
+          {myLossEntries && myLossEntries.length > 0 ? (
+            <span className="text-red-300">
+              {myLossEntries.map(([t, q]) => `${q} ${t.replace(/_/g, ' ')}`).join(', ')}
+            </span>
+          ) : (
+            <span className="text-green-400">none</span>
+          )}
+        </span>
+        <span>
+          <span className="text-gray-500">Them: </span>
+          {theirLossEntries && theirLossEntries.length > 0 ? (
+            <span className="text-orange-300">
+              {theirLossEntries.map(([t, q]) => `${q} ${t.replace(/_/g, ' ')}`).join(', ')}
+            </span>
+          ) : (
+            <span className="text-gray-600">none</span>
+          )}
+        </span>
+      </div>
+
+      {(() => {
+        const DEFENSE_TYPES = new Set([
+          'rocket_launcher','light_laser','heavy_laser','ion_cannon',
+          'plasma_turret','shield_dome_small','shield_dome_large'
+        ])
+        const remaining = combat.defender_remaining ?? {}
+        const fleetLeft = Object.entries(remaining).filter(([t, q]) => !DEFENSE_TYPES.has(t) && q > 0)
+        const defLeft = Object.entries(remaining).filter(([t, q]) => DEFENSE_TYPES.has(t) && q > 0)
+        return (
+          <>
+            <div className="text-[10px]">
+              <span className="text-gray-500">Fleet left: </span>
+              {fleetLeft.length > 0 ? (
+                <span className="text-orange-300">
+                  {fleetLeft.map(([t, q]) => `${q} ${t.replace(/_/g, ' ')}`).join(', ')}
+                </span>
+              ) : (
+                <span className="text-gray-600">none</span>
+              )}
+            </div>
+            <div className="text-[10px]">
+              <span className="text-gray-500">Defenses left: </span>
+              {defLeft.length > 0 ? (
+                <span className="text-red-300">
+                  {defLeft.map(([t, q]) => `${q} ${t.replace(/_/g, ' ')}`).join(', ')}
+                </span>
+              ) : (
+                <span className="text-gray-600">none</span>
+              )}
+            </div>
+          </>
+        )
+      })()}
+
+      {hasDebris && (
+        <div className="text-[10px] text-amber-400/80">
+          🌌 Debris: ⛏️{Math.floor(debris.metal ?? 0).toLocaleString()} 💎{Math.floor(debris.crystal ?? 0).toLocaleString()}
         </div>
       )}
     </div>
   )
 }
+
 
 // ─── Galaxy Canvas ────────────────────────────────────────────────────────────
 function GalaxyCanvas({ galaxy, myPlanet, occupiedSystems, selectedSystem, onSelectSystem }) {
@@ -384,9 +512,6 @@ function PlanetPanel({ position, planet, isOwn, onClose, onAction }) {
         </div>
       )}
 
-      {/* Intel from previous probes — only shown for non-own planets */}
-      {planet && !isOwn && planet.intel && <IntelPanel intel={planet.intel} />}
-
       {planet && !isOwn && (
         <div className="space-y-2">
           <button
@@ -476,6 +601,20 @@ function SystemView({ galaxy, system, myPlanet, onAction }) {
   const [selectedPlanet, setSelectedPlanet] = useState(null)
   const starConfig = getStarConfig(system)
 
+  // Background star field — deterministic per system so it doesn't
+  // jitter every render and stays consistent when you revisit a system.
+  const backgroundStars = useMemo(() => {
+    const rnd = makeSeededRandom(galaxy * 1000003 + system)
+    return Array.from({ length: 80 }, () => ({
+      w: rnd() * 1.5 + 0.5,
+      h: rnd() * 1.5 + 0.5,
+      top: rnd() * 100,
+      left: rnd() * 100,
+      opacity: rnd() * 0.4 + 0.1,
+    }))
+  }, [galaxy, system])
+
+
   useEffect(() => {
     async function load() {
       setLoading(true)
@@ -487,16 +626,25 @@ function SystemView({ galaxy, system, myPlanet, onAction }) {
         .eq('galaxy', galaxy)
         .eq('system', system)
 
-      // Fetch your persistent intel for the planets in this system
+            // Fetch your persistent intel (probes + combat) for the planets in this system
       const planetIds = data?.map(p => p.id) ?? []
       const intelMap = {}
+      const combatMap = {}
       if (planetIds.length > 0 && user?.id) {
-        const { data: intelRows } = await supabase
-          .from('planet_intel')
-          .select('*')
-          .eq('owner_id', user.id)
-          .in('target_planet_id', planetIds)
+        const [{ data: intelRows }, { data: combatRows }] = await Promise.all([
+          supabase
+            .from('planet_intel')
+            .select('*')
+            .eq('owner_id', user.id)
+            .in('target_planet_id', planetIds),
+          supabase
+            .from('planet_combat_intel')
+            .select('*')
+            .eq('owner_id', user.id)
+            .in('target_planet_id', planetIds),
+        ])
         intelRows?.forEach(r => { intelMap[r.target_planet_id] = r })
+        combatRows?.forEach(r => { combatMap[r.target_planet_id] = r })
       }
 
       const map = {}
@@ -505,6 +653,7 @@ function SystemView({ galaxy, system, myPlanet, onAction }) {
           ...p,
           ownerName: p.profiles?.username ?? 'Unknown',
           intel: intelMap[p.id] ?? null,
+          combat: combatMap[p.id] ?? null,
         }
       })
       setSystemData(map)
@@ -529,8 +678,18 @@ function SystemView({ galaxy, system, myPlanet, onAction }) {
       <div className="flex gap-4">
         <div className="flex-1 bg-gray-950 border border-gray-800/50 rounded-2xl overflow-hidden relative" style={{ height: 280 }}>
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
-            {[...Array(80)].map((_, i) => (
-              <div key={i} className="absolute rounded-full bg-white" style={{ width: Math.random() * 1.5 + 0.5 + 'px', height: Math.random() * 1.5 + 0.5 + 'px', top: Math.random() * 100 + '%', left: Math.random() * 100 + '%', opacity: Math.random() * 0.4 + 0.1 }} />
+            {backgroundStars.map((s, i) => (
+              <div
+                key={i}
+                className="absolute rounded-full bg-white"
+                style={{
+                  width: `${s.w}px`,
+                  height: `${s.h}px`,
+                  top: `${s.top}%`,
+                  left: `${s.left}%`,
+                  opacity: s.opacity,
+                }}
+              />
             ))}
           </div>
           <div className="absolute top-3 left-3 text-xs text-gray-600">{starConfig.type} · System [{galaxy}:{system}]</div>
@@ -578,6 +737,30 @@ function SystemView({ galaxy, system, myPlanet, onAction }) {
           />
         )}
       </div>
+
+      {/* Recent Activity — intel + battles paired per planet */}
+      {(() => {
+        const active = Object.values(systemData)
+          .filter(p => (p.intel || p.combat) && p.owner_id !== user?.id)
+          .sort((a, b) => a.position - b.position)
+        if (active.length === 0) return null
+        return (
+          <div className="space-y-3">
+            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-2">
+              🔍⚔️ Recent Activity
+              <span className="text-[10px] text-gray-600 normal-case font-normal">
+                ({active.length} {active.length === 1 ? 'planet' : 'planets'})
+              </span>
+            </h3>
+            {active.map(p => (
+              <div key={p.id} className="grid grid-cols-1 md:grid-cols-2 gap-2 items-start">
+                {p.intel && <IntelCard planet={p} intel={p.intel} />}
+                {p.combat && <BattleCard planet={p} combat={p.combat} />}
+              </div>
+            ))}
+          </div>
+        )
+      })()}
     </div>
   )
 }
