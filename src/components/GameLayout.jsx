@@ -4,6 +4,7 @@ import {
   LayoutDashboard, Building2, FlaskConical,
   Rocket, Map, FileText, LogOut, Menu, X, Zap
 } from 'lucide-react'
+import Notifications from './Notifications'
 
 const NAV_ITEMS = [
   { id: 'overview',  label: 'Overview',  icon: LayoutDashboard },
@@ -15,7 +16,7 @@ const NAV_ITEMS = [
   { id: 'fleet',     label: 'Fleet',     icon: Rocket },
 ]
 
-export default function GameLayout({ activePage, setActivePage, resources, planet, children }) {
+export default function GameLayout({ activePage, setActivePage, resources, planet, user, children }) {
   const { profile, signOut } = useAuth()
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -28,22 +29,16 @@ export default function GameLayout({ activePage, setActivePage, resources, plane
       {/* Top Bar */}
       <header className="bg-gray-900 border-b border-cyan-900/50 px-4 py-2 flex items-center justify-between z-20">
         <div className="flex items-center gap-3">
-          {/* Mobile menu toggle */}
-          <button
-            className="md:hidden text-gray-400 hover:text-white"
-            onClick={() => setMenuOpen(!menuOpen)}
-          >
+          <button className="md:hidden text-gray-400 hover:text-white" onClick={() => setMenuOpen(!menuOpen)}>
             {menuOpen ? <X size={20} /> : <Menu size={20} />}
           </button>
-          <h1 className="text-cyan-400 font-bold tracking-widest text-sm uppercase">
-            Space Empire
-          </h1>
+          <h1 className="text-cyan-400 font-bold tracking-widest text-sm uppercase">Space Empire</h1>
         </div>
 
         {/* Resource Bar */}
         <div className="hidden sm:flex items-center gap-4 text-xs">
-          <ResourcePill label="Metal" value={resources?.metal} color="text-gray-300" bg="bg-gray-800" />
-          <ResourcePill label="Crystal" value={resources?.crystal} color="text-cyan-300" bg="bg-cyan-950" />
+          <ResourcePill label="Metal"     value={resources?.metal}     color="text-gray-300" bg="bg-gray-800" />
+          <ResourcePill label="Crystal"   value={resources?.crystal}   color="text-cyan-300" bg="bg-cyan-950" />
           <ResourcePill label="Deuterium" value={resources?.deuterium} color="text-blue-300" bg="bg-blue-950" />
           <div className={`flex items-center gap-1 px-2 py-1 rounded bg-gray-800 ${energyColor}`}>
             <Zap size={12} />
@@ -56,6 +51,7 @@ export default function GameLayout({ activePage, setActivePage, resources, plane
           <span className="text-xs text-gray-400 hidden sm:block">
             Commander <span className="text-cyan-400 font-semibold">{profile?.username}</span>
           </span>
+          <Notifications userId={user?.id} onNavigate={setActivePage} />
           <button
             onClick={signOut}
             className="flex items-center gap-1 text-xs text-gray-400 hover:text-red-400 transition-colors"
@@ -73,7 +69,6 @@ export default function GameLayout({ activePage, setActivePage, resources, plane
           transform transition-transform duration-200 ease-in-out pt-14 md:pt-0
           ${menuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
         `}>
-          {/* Planet info */}
           <div className="p-3 border-b border-cyan-900/30">
             <p className="text-xs text-gray-500 uppercase tracking-wide">Current Planet</p>
             <p className="text-sm text-white font-medium truncate mt-1">{planet?.name ?? 'Loading...'}</p>
@@ -82,7 +77,6 @@ export default function GameLayout({ activePage, setActivePage, resources, plane
             </p>
           </div>
 
-          {/* Nav */}
           <nav className="p-2 space-y-1">
             {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
               <button
@@ -101,32 +95,23 @@ export default function GameLayout({ activePage, setActivePage, resources, plane
           </nav>
         </aside>
 
-        {/* Overlay for mobile */}
+        {/* Mobile overlay */}
         {menuOpen && (
-          <div
-            className="fixed inset-0 bg-black/50 z-0 md:hidden"
-            onClick={() => setMenuOpen(false)}
-          />
+          <div className="fixed inset-0 bg-black/50 z-0 md:hidden" onClick={() => setMenuOpen(false)} />
         )}
 
-        {/* Main content area */}
+        {/* Main content */}
         <main className="flex-1 overflow-y-auto p-4">
-          {/* Mobile resource bar */}
           <div className="flex sm:hidden items-center gap-2 text-xs mb-4 flex-wrap">
-            <ResourcePill label="Metal" value={resources?.metal} color="text-gray-300" bg="bg-gray-800" />
-            <ResourcePill label="Crystal" value={resources?.crystal} color="text-cyan-300" bg="bg-cyan-950" />
+            <ResourcePill label="Metal"     value={resources?.metal}     color="text-gray-300" bg="bg-gray-800" />
+            <ResourcePill label="Crystal"   value={resources?.crystal}   color="text-cyan-300" bg="bg-cyan-950" />
             <ResourcePill label="Deuterium" value={resources?.deuterium} color="text-blue-300" bg="bg-blue-950" />
             <div className={`flex items-center gap-1 px-2 py-1 rounded bg-gray-800 ${energyColor}`}>
               <Zap size={12} />
               <span>{Math.floor(energy)}</span>
             </div>
           </div>
-
-          {/* Page content injected here */}
-          {/* Page content injected here */}
-            <div id="page-content">
-            {children}
-            </div>  
+          <div id="page-content">{children}</div>
         </main>
       </div>
     </div>

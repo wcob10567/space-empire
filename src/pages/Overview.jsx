@@ -1,4 +1,5 @@
 import { useAuth } from '../context/AuthContext'
+import RenamePlanet from '../components/RenamePlanet'
 
 const TEMP_COLORS = {
   hot:    'text-red-400',
@@ -50,8 +51,9 @@ function ResourceBar({ label, current, cap, color }) {
   )
 }
 
-export default function Overview({ planet, resources, buildings }) {
-  const { profile } = useAuth()
+export default function Overview({ planet, resources, buildings, profile, setProfile }) {
+
+  // ← REMOVED the duplicate: const { profile } = useAuth()
 
   const metalMine   = buildings?.find(b => b.building_type === 'metal_mine')?.level ?? 0
   const crystalMine = buildings?.find(b => b.building_type === 'crystal_mine')?.level ?? 0
@@ -69,7 +71,12 @@ export default function Overview({ planet, resources, buildings }) {
       <div className="bg-gray-900 border border-cyan-900/50 rounded-2xl p-6">
         <div className="flex items-start justify-between flex-wrap gap-4">
           <div>
-            <h2 className="text-2xl font-bold text-cyan-400">{planet?.name ?? 'Loading...'}</h2>
+            <RenamePlanet
+                planet={planet}
+                profile={profile}
+                onRenamed={(newName) => window.location.reload()}
+                onProfileUpdate={setProfile}
+                />
             <p className="text-gray-400 mt-1">
               Galaxy {planet?.galaxy} · System {planet?.system} · Position {planet?.position}
             </p>

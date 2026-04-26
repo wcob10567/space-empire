@@ -17,6 +17,22 @@ const SHIP_STATS = {
   espionage_probe: { name: 'Espionage Probe', icon: '🔍',  speed: 100000000, cargo: 5       },
 }
 
+// Which ships are allowed per mission (null = all ships)
+const MISSION_SHIPS = {
+  attack:    null,
+  espionage: ['espionage_probe'],
+  transport: null,
+  colonize:  ['colony_ship'],
+  harvest:   ['recycler'],
+  defend:    null,
+}
+
+const MISSION_HINTS = {
+  espionage: 'Only Espionage Probes can be sent on spy missions.',
+  colonize:  'Only Colony Ships can colonize new planets.',
+  harvest:   'Only Recyclers can harvest debris fields.',
+}
+
 const MISSIONS = [
   { type: 'attack',    label: 'Attack',    icon: Target,  color: 'text-red-400',    bg: 'bg-red-900/30 border-red-800'       },
   { type: 'espionage', label: 'Espionage', icon: Search,  color: 'text-cyan-400',   bg: 'bg-cyan-900/30 border-cyan-800'     },
@@ -57,12 +73,26 @@ function calcFlightTime(originPlanet, targetCoords, ships, researchMap) {
 }
 
 // ─── Active Fleet Card ────────────────────────────────────────────────────────
-function FleetCard({ fleet }) {
+function FleetCard({ fleet, planet }) {
   const [timeLeft, setTimeLeft] = useState(0)
+  const [phase, setPhase] = useState('outbound')
 
   useEffect(() => {
-    const target = fleet.is_returning ? fleet.returns_at : fleet.arrives_at
-    const tick = () => setTimeLeft(Math.max(0, Math.floor((new Date(target) - Date.now()) / 1000)))
+    const tick = () => {
+      const now = Date.now()
+      const arrives = new Date(fleet.arrives_at).getTime()
+      const returns = new Date(fleet.returns_at).getTime()
+      if (!fleet.is_returning && now < arrives) {
+        setPhase('outbound')
+        setTimeLeft(Math.max(0, Math.floor((arrives - now) / 1000)))
+      } else if (fleet.is_returning && now < returns) {
+        setPhase('returning')
+        setTimeLeft(Math.max(0, Math.floor((returns - now) / 1000)))
+      } else {
+        setPhase('arrived')
+        setTimeLeft(0)
+      }
+    }
     tick()
     const iv = setInterval(tick, 1000)
     return () => clearInterval(iv)
@@ -71,21 +101,52 @@ function FleetCard({ fleet }) {
   const mission = MISSIONS.find(m => m.type === fleet.mission_type)
   const Icon = mission?.icon ?? Rocket
   const shipList = Object.entries(fleet.ship_payload ?? {}).filter(([, q]) => q > 0)
+  const cargo = fleet.cargo ?? {}
+  const hasCargoResources = !cargo.intel && Object.values(cargo).some(v => v > 0)
+
+  const phaseLabel = {
+    outbound: mission?.label ?? fleet.mission_type,
+    returning: '← Returning Home',
+    arrived: '✓ Arrived',
+  }[phase]
+
+  const phaseColor = phase === 'returning' ? 'text-green-400' : mission?.color ?? 'text-gray-300'
+
+  const outboundPct = Math.min(100, ((Date.now() - new Date(fleet.departs_at)) / (new Date(fleet.arrives_at) - new Date(fleet.departs_at))) * 100)
+  const returnPct = Math.min(100, ((Date.now() - new Date(fleet.arrives_at)) / (new Date(fleet.returns_at) - new Date(fleet.arrives_at))) * 100)
 
   return (
-    <div className={`bg-gray-900 border rounded-xl p-4 ${mission?.bg ?? 'border-gray-800'}`}>
-      <div className="flex items-start justify-between mb-3">
+    <div className={`bg-gray-900 border rounded-xl p-4 transition-all ${
+      phase === 'returning' ? 'border-green-900' : mission?.bg ?? 'border-gray-800'
+    }`}>
+      <div className="flex items-start justify-between mb-2">
         <div className="flex items-center gap-2">
-          <Icon size={16} className={mission?.color ?? 'text-gray-400'} />
-          <span className={`text-sm font-semibold ${mission?.color ?? 'text-gray-300'}`}>
-            {fleet.is_returning ? '← Returning Home' : mission?.label ?? fleet.mission_type}
+          <Icon size={16} className={phaseColor} />
+          <div>
+            <span className={`text-sm font-semibold ${phaseColor}`}>{phaseLabel}</span>
+            {phase === 'outbound' && fleet.target_coords && (
+              <p className="text-xs text-gray-600">→ [{fleet.target_coords}]</p>
+            )}
+            {phase === 'returning' && (
+              <p className="text-xs text-gray-600">← Returning to {planet?.name ?? 'Homeworld'}</p>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 text-xs">
+          <Clock size={12} className={phase === 'returning' ? 'text-green-400' : 'text-gray-400'} />
+          <span className={`font-mono ${phase === 'returning' ? 'text-green-400' : 'text-gray-400'}`}>
+            {phase === 'arrived' ? 'Processing...' : formatTime(timeLeft)}
           </span>
         </div>
-        <div className="flex items-center gap-2 text-xs text-gray-400">
-          <Clock size={12} />
-          <span className="font-mono">{formatTime(timeLeft)}</span>
-        </div>
       </div>
+
+      {/* Progress bar */}
+      <div className="h-1 bg-gray-800 rounded-full mb-3 overflow-hidden">
+        {phase === 'outbound' && <div className="h-full bg-cyan-600 rounded-full" style={{ width: `${outboundPct}%` }} />}
+        {phase === 'returning' && <div className="h-full bg-green-600 rounded-full" style={{ width: `${returnPct}%` }} />}
+        {phase === 'arrived' && <div className="h-full bg-yellow-600 rounded-full w-full animate-pulse" />}
+      </div>
+
       <div className="flex flex-wrap gap-2 text-xs">
         {shipList.map(([type, qty]) => (
           <span key={type} className="bg-gray-800 px-2 py-1 rounded text-gray-300">
@@ -93,18 +154,20 @@ function FleetCard({ fleet }) {
           </span>
         ))}
       </div>
-      {fleet.cargo && Object.values(fleet.cargo).some(v => v > 0) && (
+
+      {hasCargoResources && (
         <div className="mt-2 flex gap-3 text-xs text-gray-500">
-          {fleet.cargo.metal > 0 && <span>⛏️ {fleet.cargo.metal.toLocaleString()}</span>}
-          {fleet.cargo.crystal > 0 && <span>💎 {fleet.cargo.crystal.toLocaleString()}</span>}
-          {fleet.cargo.deuterium > 0 && <span>🔵 {fleet.cargo.deuterium.toLocaleString()}</span>}
+          <span>Carrying:</span>
+          {cargo.metal > 0 && <span>⛏️ {Math.floor(cargo.metal).toLocaleString()}</span>}
+          {cargo.crystal > 0 && <span>💎 {Math.floor(cargo.crystal).toLocaleString()}</span>}
+          {cargo.deuterium > 0 && <span>🔵 {Math.floor(cargo.deuterium).toLocaleString()}</span>}
         </div>
       )}
     </div>
   )
 }
 
-// ─── Quick Dispatch Form (pre-filled from galaxy map) ─────────────────────────
+// ─── Quick Dispatch Form ──────────────────────────────────────────────────────
 function QuickDispatchForm({ planet, ships, resources, research, pendingMission, onDispatch, onClose }) {
   const { user } = useAuth()
   const [selectedShips, setSelectedShips] = useState({})
@@ -116,21 +179,27 @@ function QuickDispatchForm({ planet, ships, resources, research, pendingMission,
   const researchMap = {}
   research?.forEach(r => { researchMap[r.tech_type] = r.level })
 
-  const availableShips = ships?.filter(s => s.quantity > 0) ?? []
+  // Filter ships based on mission type
+  const missionShipFilter = MISSION_SHIPS[mission]
+  const availableShips = (ships?.filter(s => s.quantity > 0) ?? [])
+    .filter(s => !missionShipFilter || missionShipFilter.includes(s.ship_type))
+
   const totalSelected = Object.values(selectedShips).reduce((a, b) => a + b, 0)
   const flightTime = calcFlightTime(planet, target, selectedShips, researchMap)
   const totalCargo = Object.entries(selectedShips).reduce((sum, [type, qty]) => sum + (SHIP_STATS[type]?.cargo ?? 0) * qty, 0)
   const usedCargo = cargo.metal + cargo.crystal + cargo.deuterium
   const missionInfo = MISSIONS.find(m => m.type === mission)
 
-  // Fleets that return home: all except defend and transport to own planet
-  const returnsHome = !['defend'].includes(mission)
+  // Clear ship selection when mission changes
+  const handleMissionChange = (newMission) => {
+    setMission(newMission)
+    setSelectedShips({})
+  }
 
   async function handleSend() {
     if (totalSelected === 0 || sending) return
     setSending(true)
 
-    const devSpeed = import.meta.env.DEV ? (window.__devSpeed ?? 1) : 1
     const departsAt = new Date().toISOString()
     const arrivesAt = new Date(Date.now() + flightTime * 1000).toISOString()
     const returnsAt = new Date(Date.now() + flightTime * 2000).toISOString()
@@ -160,9 +229,9 @@ function QuickDispatchForm({ planet, ships, resources, research, pendingMission,
       arrives_at: arrivesAt,
       returns_at: returnsAt,
       status: 'in_flight',
+      target_coords: `${target.galaxy}:${target.system}:${target.position}`,
     })
 
-    // Deduct ships from planet
     for (const [type, qty] of Object.entries(selectedShips)) {
       if (qty <= 0) continue
       const ship = ships.find(s => s.ship_type === type)
@@ -187,7 +256,7 @@ function QuickDispatchForm({ planet, ships, resources, research, pendingMission,
 
       {/* Target coordinates */}
       <div className="bg-gray-800 rounded-xl p-3">
-        <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Target</p>
+        <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Target Coordinates</p>
         <div className="grid grid-cols-3 gap-2">
           {['galaxy', 'system', 'position'].map(field => (
             <div key={field}>
@@ -203,9 +272,8 @@ function QuickDispatchForm({ planet, ships, resources, research, pendingMission,
           ))}
         </div>
         <p className="text-xs text-gray-600 mt-2">
-          Coordinates: <span className="text-cyan-400 font-mono">[{target.galaxy}:{target.system}:{target.position}]</span>
-          {flightTime > 0 && <span className="ml-2">· Flight time: <span className="text-cyan-400 font-mono">{formatTime(flightTime)}</span></span>}
-          {returnsHome && <span className="ml-2 text-green-600">· Returns automatically</span>}
+          <span className="text-cyan-400 font-mono">[{target.galaxy}:{target.system}:{target.position}]</span>
+          {flightTime > 0 && <span className="ml-2">· <span className="text-cyan-400 font-mono">{formatTime(flightTime)}</span></span>}
         </p>
       </div>
 
@@ -214,8 +282,10 @@ function QuickDispatchForm({ planet, ships, resources, research, pendingMission,
         <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Mission</p>
         <div className="grid grid-cols-3 gap-2">
           {MISSIONS.map(m => (
-            <button key={m.type} onClick={() => setMission(m.type)}
-              className={`flex items-center gap-2 p-2 rounded-lg border text-xs font-medium transition-all ${mission === m.type ? m.bg : 'border-gray-800 bg-gray-800/50 hover:border-gray-700'}`}>
+            <button key={m.type} onClick={() => handleMissionChange(m.type)}
+              className={`flex items-center gap-2 p-2 rounded-lg border text-xs font-medium transition-all ${
+                mission === m.type ? m.bg : 'border-gray-800 bg-gray-800/50 hover:border-gray-700'
+              }`}>
               <m.icon size={14} className={m.color} />
               <span className={m.color}>{m.label}</span>
             </button>
@@ -226,11 +296,18 @@ function QuickDispatchForm({ planet, ships, resources, research, pendingMission,
       {/* Ship selection */}
       <div>
         <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">
-          Ships — <span className="text-yellow-400">{totalSelected} selected</span>
+          Ships <span className="text-yellow-400 ml-1">{totalSelected > 0 ? `— ${totalSelected} selected` : ''}</span>
           {totalCargo > 0 && <span className="text-gray-600 ml-2">· Cargo: {totalCargo.toLocaleString()}</span>}
         </p>
+        {MISSION_HINTS[mission] && (
+          <p className="text-xs text-yellow-600 mb-2">⚠ {MISSION_HINTS[mission]}</p>
+        )}
         {availableShips.length === 0 ? (
-          <p className="text-xs text-gray-600 text-center py-4">No ships available. Build ships in the Shipyard first.</p>
+          <p className="text-xs text-gray-600 text-center py-4">
+            {missionShipFilter
+              ? `No ${missionShipFilter.map(s => SHIP_STATS[s]?.name).join(' or ')} available. Build them in the Shipyard first.`
+              : 'No ships available. Build ships in the Shipyard first.'}
+          </p>
         ) : (
           <div className="space-y-2 max-h-64 overflow-y-auto">
             {availableShips.map(ship => {
@@ -246,7 +323,7 @@ function QuickDispatchForm({ planet, ships, resources, research, pendingMission,
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button onClick={() => setSelectedShips(p => ({ ...p, [ship.ship_type]: Math.max(0, (p[ship.ship_type] ?? 0) - 1) }))}
-                      className="w-6 h-6 bg-gray-700 hover:bg-gray-600 rounded text-white flex items-center justify-center text-sm">-</button>
+                      className="w-6 h-6 bg-gray-700 hover:bg-gray-600 rounded text-white flex items-center justify-center">-</button>
                     <input type="number" min={0} max={ship.quantity} value={selected}
                       onChange={e => setSelectedShips(p => ({ ...p, [ship.ship_type]: Math.min(ship.quantity, Math.max(0, parseInt(e.target.value) || 0)) }))}
                       className="w-14 bg-gray-700 text-white text-center text-xs rounded px-1 py-1" />
@@ -281,8 +358,8 @@ function QuickDispatchForm({ planet, ships, resources, research, pendingMission,
       <button onClick={handleSend} disabled={totalSelected === 0 || sending}
         className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold transition-all ${
           totalSelected > 0 && !sending
-            ? `${missionInfo?.bg ?? 'bg-cyan-700'} text-white hover:opacity-90`
-            : 'bg-gray-800 text-gray-600 cursor-not-allowed'
+            ? `${missionInfo?.bg ?? 'bg-cyan-700 border-cyan-600'} text-white hover:opacity-90`
+            : 'bg-gray-800 text-gray-600 cursor-not-allowed border border-gray-700'
         }`}>
         {missionInfo?.icon && <missionInfo.icon size={16} className={missionInfo.color} />}
         {sending ? 'Launching...' : `Launch ${missionInfo?.label ?? 'Fleet'}`}
@@ -291,7 +368,7 @@ function QuickDispatchForm({ planet, ships, resources, research, pendingMission,
   )
 }
 
-// ─── Ships on Planet Panel ────────────────────────────────────────────────────
+// ─── Ships on Planet ──────────────────────────────────────────────────────────
 function ShipsOnPlanet({ ships, planet }) {
   const ownedShips = ships?.filter(s => s.quantity > 0) ?? []
   if (ownedShips.length === 0) return (
@@ -334,10 +411,28 @@ export default function Fleet({ planet, ships, resources, research, setShips }) 
 
   useEffect(() => {
     if (!user?.id) return
+    supabase.rpc('process_arrived_fleets')
     loadFleets()
+    const interval = setInterval(async () => {
+      await supabase.rpc('process_arrived_fleets')
+      const { data } = await supabase
+        .from('fleets')
+        .select('*')
+        .eq('owner_id', user?.id)
+        .eq('status', 'in_flight')
+        .order('arrives_at', { ascending: true })
+      if (data) {
+        setFleets(prev => {
+          const prevIds = prev.map(f => f.id + f.is_returning).join()
+          const newIds = data.map(f => f.id + f.is_returning).join()
+          if (prevIds === newIds) return prev
+          return data
+        })
+      }
+    }, 3000)
+    return () => clearInterval(interval)
   }, [user?.id])
 
-  // Pick up pending mission from galaxy map
   useEffect(() => {
     if (window.__pendingMission) {
       setPendingMission(window.__pendingMission)
@@ -370,7 +465,6 @@ export default function Fleet({ planet, ships, resources, research, setShips }) 
 
   return (
     <div className="space-y-6 w-full">
-      {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <Rocket size={20} className="text-cyan-400" />
@@ -395,10 +489,8 @@ export default function Fleet({ planet, ships, resources, research, setShips }) 
         </div>
       )}
 
-      {/* Ships on planet */}
       <ShipsOnPlanet ships={ships} planet={planet} />
 
-      {/* Dispatch form */}
       {showDispatch && (
         <QuickDispatchForm
           planet={planet}
@@ -411,7 +503,6 @@ export default function Fleet({ planet, ships, resources, research, setShips }) 
         />
       )}
 
-      {/* Active fleets */}
       <div>
         <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">Active Fleets</h3>
         {loading ? (
@@ -420,7 +511,7 @@ export default function Fleet({ planet, ships, resources, research, setShips }) 
           <div className="text-center py-12 border border-dashed border-gray-800 rounded-2xl">
             <Rocket size={32} className="text-gray-700 mx-auto mb-3" />
             <p className="text-gray-600 text-sm">No active fleets</p>
-            <p className="text-gray-700 text-xs mt-1">Dispatch a fleet or launch an attack from the Galaxy map</p>
+            <p className="text-gray-700 text-xs mt-1">Launch an attack or send probes from the Galaxy map</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

@@ -119,7 +119,7 @@ function Game() {
     }
     processFleets()
     restockNpcs()
-    const fleetInterval = setInterval(processFleets, 10000)
+    const fleetInterval = setInterval(processFleets, 3000)
     const npcInterval = setInterval(restockNpcs, 300000)
     return () => {
       clearInterval(fleetInterval)
@@ -165,12 +165,13 @@ function Game() {
   }
 
   return (
-    <GameLayout
-      activePage={activePage}
-      setActivePage={setActivePage}
-      resources={resources}
-      planet={planet}
-    >
+      <GameLayout
+        activePage={activePage}
+        setActivePage={setActivePage}
+        resources={resources}
+        planet={planet}
+        user={user}
+      > 
       {renderPage()}
       <DevPanel
         planet={planet}
