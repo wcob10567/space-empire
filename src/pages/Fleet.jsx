@@ -19,7 +19,8 @@ const SHIP_STATS = {
 
 // Which ships are allowed per mission (null = all ships)
 const MISSION_SHIPS = {
-  attack:    null,
+  // Attack: every ship except espionage probes (probes have 0 attack and die instantly)
+  attack:    ['light_fighter', 'heavy_fighter', 'cruiser', 'battleship', 'bomber', 'destroyer', 'deathstar', 'colony_ship', 'recycler'],
   espionage: ['espionage_probe'],
   transport: null,
   colonize:  ['colony_ship'],
