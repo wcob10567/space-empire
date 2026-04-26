@@ -45,6 +45,115 @@ function getStarConfig(system) {
   return types[system % types.length]
 }
 
+// ─── Intel helpers ───────────────────────────────────────────────────────────
+function formatAge(dateStr) {
+  if (!dateStr) return ''
+  const secs = Math.max(0, Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000))
+  if (secs < 60) return 'just now'
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`
+  return `${Math.floor(secs / 86400)}d ago`
+}
+
+function fmtNum(value, isEstimate) {
+  if (value === undefined || value === null) return '?'
+  return (isEstimate ? '~' : '') + Math.floor(value).toLocaleString()
+}
+
+function shipPairs(obj) {
+  if (!obj) return null
+  return Object.entries(obj).filter(([k, v]) => k !== 'is_estimate' && v > 0)
+}
+
+function IntelPanel({ intel }) {
+  const res = intel.resources_seen ?? {}
+  const ships = intel.ships_seen
+  const defenses = intel.defenses_seen
+  const buildings = intel.buildings_seen
+  const research = intel.research_seen
+
+  const resEst = res.is_estimate === true
+  const shipsEst = ships?.is_estimate === true
+  const defEst = defenses?.is_estimate === true
+
+  const shipEntries = shipPairs(ships)
+  const defEntries = shipPairs(defenses)
+  const buildingEntries = buildings ? Object.entries(buildings).filter(([k]) => k !== 'is_estimate') : null
+  const researchEntries = research ? Object.entries(research).filter(([k]) => k !== 'is_estimate') : null
+
+  return (
+    <div className="mb-3 bg-cyan-950/30 border border-cyan-900/40 rounded-lg p-2 space-y-1.5">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-cyan-400 font-semibold flex items-center gap-1">
+          🔍 Intel
+          {resEst && <span className="text-[9px] text-yellow-500 font-normal">~estimate</span>}
+        </span>
+        <span className="text-[10px] text-gray-600">{formatAge(intel.last_scanned_at)}</span>
+      </div>
+
+      {/* Resources */}
+      <div className="text-[11px]">
+        <div className={`flex flex-wrap gap-x-2 ${resEst ? 'text-yellow-400' : 'text-gray-300'}`}>
+          <span>⛏️ {fmtNum(res.metal, resEst)}</span>
+          <span>💎 {fmtNum(res.crystal, resEst)}</span>
+          <span>🔵 {fmtNum(res.deuterium, resEst)}</span>
+        </div>
+        {res.bunker_pct > 0 && (
+          <div className="text-[10px] text-amber-400/80 mt-0.5">
+            🔒 {res.bunker_pct}% protected · max loot ⛏️{fmtNum(res.lootable_metal, resEst)} 💎{fmtNum(res.lootable_crystal, resEst)} 🔵{fmtNum(res.lootable_deuterium, resEst)}
+          </div>
+        )}
+      </div>
+
+      {/* Ships */}
+      <div className="text-[10px]">
+        <span className="text-gray-500">Ships: </span>
+        {ships ? (
+          shipEntries.length === 0 ? (
+            <span className="text-gray-600">None</span>
+          ) : (
+            <span className={shipsEst ? 'text-yellow-400' : 'text-orange-300'}>
+              {shipEntries.map(([t, q]) => `${shipsEst ? '~' : ''}${q} ${t.replace(/_/g, ' ')}`).join(', ')}
+            </span>
+          )
+        ) : (
+          <span className="text-gray-600 italic">hidden — need higher Espionage Tech</span>
+        )}
+      </div>
+
+      {/* Defenses */}
+      <div className="text-[10px]">
+        <span className="text-gray-500">Defenses: </span>
+        {defenses ? (
+          defEntries.length === 0 ? (
+            <span className="text-gray-600">None</span>
+          ) : (
+            <span className={defEst ? 'text-yellow-400' : 'text-red-300'}>
+              {defEntries.map(([t, q]) => `${defEst ? '~' : ''}${q} ${t.replace(/_/g, ' ')}`).join(', ')}
+            </span>
+          )
+        ) : (
+          <span className="text-gray-600 italic">hidden — need higher Espionage Tech</span>
+        )}
+      </div>
+
+      {/* Buildings + Research (compact, only if revealed) */}
+      {buildingEntries && buildingEntries.length > 0 && (
+        <div className="text-[10px] text-gray-400">
+          <span className="text-gray-500">Buildings: </span>
+          {buildingEntries.map(([t, lvl]) => `${t.replace(/_/g, ' ')} ${lvl}`).join(', ')}
+        </div>
+      )}
+      {researchEntries && researchEntries.length > 0 && (
+        <div className="text-[10px] text-gray-400">
+          <span className="text-gray-500">Research: </span>
+          {researchEntries.map(([t, lvl]) => `${t.replace(/_/g, ' ')} ${lvl}`).join(', ')}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Galaxy Canvas ────────────────────────────────────────────────────────────
 function GalaxyCanvas({ galaxy, myPlanet, occupiedSystems, selectedSystem, onSelectSystem }) {
   const canvasRef = useRef(null)
@@ -275,6 +384,9 @@ function PlanetPanel({ position, planet, isOwn, onClose, onAction }) {
         </div>
       )}
 
+      {/* Intel from previous probes — only shown for non-own planets */}
+      {planet && !isOwn && planet.intel && <IntelPanel intel={planet.intel} />}
+
       {planet && !isOwn && (
         <div className="space-y-2">
           <button
@@ -322,6 +434,7 @@ function PlanetPanel({ position, planet, isOwn, onClose, onAction }) {
 // ─── Planet Component ─────────────────────────────────────────────────────────
 function PlanetComp({ config, position, planet, isOwn, isSelected, onClick }) {
   const hasOwner = !!planet
+  const hasIntel = !!planet?.intel && !isOwn
   const borderColor = isOwn ? '#00e5ff' : hasOwner ? '#ff4444' : 'transparent'
   const glowColor = isOwn ? '#00e5ff' : hasOwner ? '#ff4444' : 'transparent'
   return (
@@ -334,6 +447,15 @@ function PlanetComp({ config, position, planet, isOwn, isSelected, onClick }) {
           ? <div className="rounded-full border border-gray-800 bg-gray-900/30 group-hover:border-gray-600 transition-colors" style={{ width: 8, height: 8 }} />
           : <div className="rounded-full transition-transform group-hover:scale-110" style={{ width: config.size, height: config.size, background: `radial-gradient(circle at 35% 30%, ${config.color}dd, ${config.color} 50%, #111 100%)`, boxShadow: isSelected ? `0 0 12px ${config.color}88` : `0 0 6px ${config.color}44` }} />
         }
+        {hasIntel && (
+          <span
+            className="absolute top-0 right-0 text-[10px] leading-none"
+            title="You have scouting intel for this planet"
+            style={{ filter: 'drop-shadow(0 0 2px #06b6d4)' }}
+          >
+            🔍
+          </span>
+        )}
       </div>
       {hasOwner && (
         <div className="text-center" style={{ maxWidth: 64 }}>
@@ -364,13 +486,32 @@ function SystemView({ galaxy, system, myPlanet, onAction }) {
         .select('*, profiles(username)')
         .eq('galaxy', galaxy)
         .eq('system', system)
+
+      // Fetch your persistent intel for the planets in this system
+      const planetIds = data?.map(p => p.id) ?? []
+      const intelMap = {}
+      if (planetIds.length > 0 && user?.id) {
+        const { data: intelRows } = await supabase
+          .from('planet_intel')
+          .select('*')
+          .eq('owner_id', user.id)
+          .in('target_planet_id', planetIds)
+        intelRows?.forEach(r => { intelMap[r.target_planet_id] = r })
+      }
+
       const map = {}
-      data?.forEach(p => { map[p.position] = { ...p, ownerName: p.profiles?.username ?? 'Unknown' } })
+      data?.forEach(p => {
+        map[p.position] = {
+          ...p,
+          ownerName: p.profiles?.username ?? 'Unknown',
+          intel: intelMap[p.id] ?? null,
+        }
+      })
       setSystemData(map)
       setLoading(false)
     }
     load()
-  }, [galaxy, system])
+  }, [galaxy, system, user?.id])
 
   function handlePlanetClick(pos, planet) {
     if (selectedPos === pos) { setSelectedPos(null); setSelectedPlanet(null) }
