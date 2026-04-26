@@ -14,6 +14,9 @@ import DevPanel from './components/DevPanel'
 import Reports from './pages/Reports'
 
 const TICK_INTERVAL = 5000
+const FLEET_TICK = 3000
+const NPC_TICK = 300000
+const ACTIVE_PLANET_KEY = 'space-empire-active-planet'
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth()
@@ -30,17 +33,24 @@ function ProtectedRoute({ children }) {
 }
 
 function Game() {
-  // ✅ Single useAuth call with all needed values
   const { user, profile, setProfile } = useAuth()
 
-  // ✅ activePage state declared
   const [activePage, setActivePage] = useState('overview')
-
-  const [planet, setPlanet] = useState(null)
+  const [planets, setPlanets] = useState([])
+  const [activePlanetId, setActivePlanetIdState] = useState(
+    () => localStorage.getItem(ACTIVE_PLANET_KEY)
+  )
   const [resources, setResources] = useState(null)
   const [buildings, setBuildings] = useState([])
   const [research, setResearch] = useState([])
   const [ships, setShips] = useState([])
+
+  const planet = planets.find(p => p.id === activePlanetId) ?? planets[0] ?? null
+
+  const setActivePlanetId = useCallback((id) => {
+    setActivePlanetIdState(id)
+    if (id) localStorage.setItem(ACTIVE_PLANET_KEY, id)
+  }, [])
 
   const getProduction = useCallback((buildings) => {
     const lvl = (type) => buildings?.find(b => b.building_type === type)?.level ?? 0
@@ -52,50 +62,56 @@ function Game() {
     }
   }, [])
 
+  // Reset activePlanetId if the stored id isn't in the list (e.g. deleted planet)
+  useEffect(() => {
+    if (planets.length === 0) return
+    const valid = planets.some(p => p.id === activePlanetId)
+    if (!valid) setActivePlanetId(planets[0].id)
+  }, [planets, activePlanetId, setActivePlanetId])
+
+  // Load planets list + research (per-user, doesn't depend on active planet)
   useEffect(() => {
     if (!user) return
-    async function loadGameData() {
-      // ✅ Update last online for bunker calculation
+    async function loadUserData() {
       await supabase.rpc('update_last_online', { p_user_id: user.id })
 
       const { data: planetData } = await supabase
         .from('planets')
         .select('*')
         .eq('owner_id', user.id)
-        .eq('is_homeworld', true)
-        .single()
-      if (!planetData) return
-      setPlanet(planetData)
+        .order('is_homeworld', { ascending: false })
+        .order('created_at', { ascending: true })
+      if (planetData) setPlanets(planetData)
 
-      const { data: resData } = await supabase
-        .from('resources')
-        .select('*')
-        .eq('planet_id', planetData.id)
-        .single()
-      if (resData) setResources(resData)
-
-      const { data: bldData } = await supabase
-        .from('buildings')
-        .select('*')
-        .eq('planet_id', planetData.id)
-      if (bldData) setBuildings(bldData)
-
-      const { data: resData2 } = await supabase
+      const { data: researchData } = await supabase
         .from('research')
         .select('*')
         .eq('owner_id', user.id)
-      if (resData2) setResearch(resData2)
-
-      const { data: shipData } = await supabase
-        .from('ships')
-        .select('*')
-        .eq('planet_id', planetData.id)
-      if (shipData) setShips(shipData)
+      if (researchData) setResearch(researchData)
     }
-    loadGameData()
+    loadUserData()
   }, [user])
 
-  // Local resource tick
+  // Load per-planet data whenever the active planet changes
+  useEffect(() => {
+    if (!planet?.id) return
+    setResources(null)
+    setBuildings([])
+    setShips([])
+    async function loadPlanetData() {
+      const [{ data: resData }, { data: bldData }, { data: shipData }] = await Promise.all([
+        supabase.from('resources').select('*').eq('planet_id', planet.id).single(),
+        supabase.from('buildings').select('*').eq('planet_id', planet.id),
+        supabase.from('ships').select('*').eq('planet_id', planet.id),
+      ])
+      if (resData) setResources(resData)
+      if (bldData) setBuildings(bldData)
+      if (shipData) setShips(shipData)
+    }
+    loadPlanetData()
+  }, [planet?.id])
+
+  // Local resource tick (active planet only — DB doesn't store real-time anyway)
   useEffect(() => {
     if (!resources || !buildings.length) return
     const prod = getProduction(buildings)
@@ -115,30 +131,48 @@ function Game() {
     return () => clearInterval(interval)
   }, [resources, buildings, getProduction])
 
-// Process arrived fleets and restock NPCs
+  // Fleet tick: process arrivals, refresh planet list (catches new colonies),
+  // refresh ships for the active planet
   useEffect(() => {
-    if (!user || !planet) return
-    async function processFleets() {
+    if (!user) return
+    async function tick() {
       await supabase.rpc('process_arrived_fleets')
-      // Refresh ships after processing in case any fleets returned
-      const { data } = await supabase
-        .from('ships')
+
+      const { data: planetData } = await supabase
+        .from('planets')
         .select('*')
-        .eq('planet_id', planet.id)
-      if (data) setShips(data)
+        .eq('owner_id', user.id)
+        .order('is_homeworld', { ascending: false })
+        .order('created_at', { ascending: true })
+      if (planetData) {
+        setPlanets(prev => {
+          const prevKey = prev.map(p => p.id).join()
+          const newKey = planetData.map(p => p.id).join()
+          if (prevKey === newKey) return prev
+          return planetData
+        })
+      }
+
+      if (planet?.id) {
+        const { data } = await supabase
+          .from('ships')
+          .select('*')
+          .eq('planet_id', planet.id)
+        if (data) setShips(data)
+      }
     }
     async function restockNpcs() {
       await supabase.rpc('restock_npc_resources')
     }
-    processFleets()
+    tick()
     restockNpcs()
-    const fleetInterval = setInterval(processFleets, 3000)
-    const npcInterval = setInterval(restockNpcs, 300000)
+    const fleetInterval = setInterval(tick, FLEET_TICK)
+    const npcInterval = setInterval(restockNpcs, NPC_TICK)
     return () => {
       clearInterval(fleetInterval)
       clearInterval(npcInterval)
     }
-  }, [user, planet])
+  }, [user, planet?.id])
 
   // Listen for navigation events from galaxy map
   useEffect(() => {
@@ -152,12 +186,11 @@ function Game() {
   function renderPage() {
     switch (activePage) {
       case 'overview':
-        // ✅ profile and setProfile passed to Overview
         return <Overview planet={planet} resources={resources} buildings={buildings} profile={profile} setProfile={setProfile} />
       case 'buildings':
         return <Buildings planet={planet} resources={resources} buildings={buildings} setBuildings={setBuildings} setResources={setResources} />
       case 'research':
-        return <Research planet={planet} resources={resources} buildings={buildings} research={research} setResearch={setResearch} setResources={setResources} />
+        return <Research planet={planet} planets={planets} resources={resources} buildings={buildings} research={research} setResearch={setResearch} setResources={setResources} />
       case 'shipyard':
         return <Shipyard planet={planet} resources={resources} buildings={buildings} research={research} ships={ships} setShips={setShips} setResources={setResources} />
       case 'galaxy':
@@ -184,6 +217,8 @@ function Game() {
       setActivePage={setActivePage}
       resources={resources}
       planet={planet}
+      planets={planets}
+      onSelectPlanet={setActivePlanetId}
       user={user}
     >
       {renderPage()}
