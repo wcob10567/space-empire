@@ -277,10 +277,10 @@ function EspionageReportCard({ report, onDelete }) {
             </div>
           )}
 
-          {/* Resources */}
+         {/* Resources */}
           <div>
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Resources</p>
-            <div className="flex gap-4 text-xs">
+            <div className="flex gap-4 text-xs flex-wrap">
               <span className={resourcesEstimate ? 'text-yellow-400' : 'text-gray-300'}>
                 ⛏️ {formatValue(res.metal, resourcesEstimate)} metal
               </span>
@@ -291,6 +291,20 @@ function EspionageReportCard({ report, onDelete }) {
                 🔵 {formatValue(res.deuterium, resourcesEstimate)} deuterium
               </span>
             </div>
+
+            {/* Bunker protection info */}
+            {res.bunker_pct > 0 && (
+              <div className="mt-2 bg-amber-900/20 border border-amber-800/50 rounded-lg p-2">
+                <p className="text-xs text-amber-400 font-semibold mb-1">
+                  🔒 Vault Protection: {res.bunker_pct}% of resources are hidden
+                </p>
+                <div className="flex gap-3 text-xs text-amber-300/70">
+                  <span>Max loot: ⛏️ {formatValue(res.lootable_metal, resourcesEstimate)}</span>
+                  <span>💎 {formatValue(res.lootable_crystal, resourcesEstimate)}</span>
+                  <span>🔵 {formatValue(res.lootable_deuterium, resourcesEstimate)}</span>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Ships */}
