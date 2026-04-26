@@ -312,15 +312,19 @@ export default function Buildings({ planet, resources, buildings, setBuildings, 
   const roboticsLvl = buildings?.find(b => b.building_type === 'robotics_factory')?.level ?? 0
   const anyUpgrading = buildings?.some(b => b.is_upgrading) ?? false
 
-  // Check for completed upgrades on load
+  // Catch any upgrade whose timer expired — runs on mount AND every 2s while on the page,
+  // so a missed setTimeout (tab throttled, page reloaded, etc.) doesn't leave a build stuck.
   useEffect(() => {
-    if (!planet || !buildings?.length) return
+    if (!planet) return
+    let cancelled = false
     async function checkCompleted() {
+      if (cancelled || !buildings?.length) return
       const now = new Date()
       const completed = buildings.filter(
         b => b.is_upgrading && b.upgrade_complete_at && new Date(b.upgrade_complete_at) <= now
       )
       for (const b of completed) {
+        if (cancelled) return
         await supabase.from('buildings').update({
           level: b.level + 1,
           is_upgrading: false,
@@ -334,7 +338,9 @@ export default function Buildings({ planet, resources, buildings, setBuildings, 
       }
     }
     checkCompleted()
-  }, [planet, buildings?.length])
+    const interval = setInterval(checkCompleted, 2000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [planet, buildings, setBuildings])
 
   async function handleUpgrade(building, cost) {
     if (!planet || upgrading) return

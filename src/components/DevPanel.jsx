@@ -51,11 +51,94 @@ export default function DevPanel({ planet, resources, buildings, research, ships
     setLog(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev.slice(0, 9)])
   }
 
-  function setSpeedMultiplier(val) {
-  setSpeed(val)
-  window.__devSpeed = val
-  addLog(`Speed set to ${1/val}x faster`)
-}
+  async function setSpeedMultiplier(val) {
+    const oldSpeed = window.__devSpeed ?? speed ?? 1
+    setSpeed(val)
+    window.__devSpeed = val
+
+    if (val === oldSpeed || !planet?.owner_id) {
+      addLog(`Speed set to ${val < 1 ? 1/val + 'x faster' : 'normal'}`)
+      return
+    }
+
+    // Scale every in-progress timer's remaining duration by (new/old).
+    // Going 1 → 0.01 (100x faster) shrinks remaining time by 100x. Already-elapsed time stays.
+    const scale = val / oldSpeed
+    const now = Date.now()
+    const scaleTime = (oldDateStr) => {
+      if (!oldDateStr) return null
+      const target = new Date(oldDateStr).getTime()
+      const remaining = target - now
+      if (remaining <= 0) return oldDateStr // already past, don't bump it
+      return new Date(now + remaining * scale).toISOString()
+    }
+
+    const ownerId = planet.owner_id
+
+    // Owned planet ids (for buildings .in() filter)
+    const { data: ownedPlanets } = await supabase
+      .from('planets').select('id').eq('owner_id', ownerId)
+    const planetIds = (ownedPlanets ?? []).map(p => p.id)
+
+    // Scale fleets
+    let fleetCount = 0
+    const { data: flts } = await supabase
+      .from('fleets')
+      .select('id, arrives_at, returns_at, is_returning')
+      .eq('owner_id', ownerId)
+      .eq('status', 'in_flight')
+    for (const f of flts ?? []) {
+      const updates = {}
+      if (!f.is_returning) {
+        const next = scaleTime(f.arrives_at)
+        if (next) updates.arrives_at = next
+      }
+      const nextR = scaleTime(f.returns_at)
+      if (nextR) updates.returns_at = nextR
+      if (Object.keys(updates).length > 0) {
+        await supabase.from('fleets').update(updates).eq('id', f.id)
+        fleetCount++
+      }
+    }
+
+    // Scale building upgrades across every owned planet
+    let buildCount = 0
+    if (planetIds.length > 0) {
+      const { data: blds } = await supabase
+        .from('buildings')
+        .select('id, upgrade_complete_at')
+        .in('planet_id', planetIds)
+        .eq('is_upgrading', true)
+      for (const b of blds ?? []) {
+        const next = scaleTime(b.upgrade_complete_at)
+        if (next && next !== b.upgrade_complete_at) {
+          await supabase.from('buildings').update({ upgrade_complete_at: next }).eq('id', b.id)
+          buildCount++
+        }
+      }
+    }
+
+    // Scale research (account-wide)
+    let researchCount = 0
+    const { data: rsh } = await supabase
+      .from('research')
+      .select('id, research_complete_at')
+      .eq('owner_id', ownerId)
+      .eq('is_researching', true)
+    for (const r of rsh ?? []) {
+      const next = scaleTime(r.research_complete_at)
+      if (next && next !== r.research_complete_at) {
+        await supabase.from('research').update({ research_complete_at: next }).eq('id', r.id)
+        researchCount++
+      }
+    }
+
+    addLog(`Scaled ${fleetCount} fleet(s), ${buildCount} build(s), ${researchCount} research(es) — reloading...`)
+
+    // Reload to clear stale in-page setTimeouts so DB-driven completion takes over.
+    // Shipyard ship builds use only local state, so any in-progress build will be lost — dev tool limitation.
+    setTimeout(() => window.location.reload(), 200)
+  }
 
   async function addResources() {
     if (!planet) return

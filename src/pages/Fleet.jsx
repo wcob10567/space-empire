@@ -219,10 +219,16 @@ function QuickDispatchForm({ planet, ships, resources, research, pendingMission,
       return
     }
 
+    if (mission === 'colonize' && targetPlanet) {
+      alert(`Position [${target.galaxy}:${target.system}:${target.position}] is already occupied. Pick an empty slot.`)
+      setSending(false)
+      return
+    }
+
     await supabase.from('fleets').insert({
       owner_id: user?.id,
       origin_planet_id: planet.id,
-      target_planet_id: targetPlanet?.id ?? null,
+      target_planet_id: mission === 'colonize' ? null : (targetPlanet?.id ?? null),
       mission_type: mission,
       ship_payload: selectedShips,
       cargo,

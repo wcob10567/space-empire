@@ -16,12 +16,18 @@ const NAV_ITEMS = [
   { id: 'fleet',     label: 'Fleet',     icon: Rocket },
 ]
 
-export default function GameLayout({ activePage, setActivePage, resources, planet, user, children }) {
+export default function GameLayout({
+  activePage, setActivePage,
+  resources, planet, planets, onSelectPlanet,
+  user, children,
+}) {
   const { profile, signOut } = useAuth()
   const [menuOpen, setMenuOpen] = useState(false)
 
   const energy = resources?.energy ?? 0
   const energyColor = energy >= 0 ? 'text-yellow-400' : 'text-red-400'
+
+  const planetList = planets ?? (planet ? [planet] : [])
 
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col">
@@ -69,12 +75,38 @@ export default function GameLayout({ activePage, setActivePage, resources, plane
           transform transition-transform duration-200 ease-in-out pt-14 md:pt-0
           ${menuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
         `}>
+          {/* Planet switcher */}
           <div className="p-3 border-b border-cyan-900/30">
-            <p className="text-xs text-gray-500 uppercase tracking-wide">Current Planet</p>
-            <p className="text-sm text-white font-medium truncate mt-1">{planet?.name ?? 'Loading...'}</p>
-            <p className="text-xs text-gray-500 mt-0.5">
-              {planet ? `${planet.galaxy}:${planet.system}:${planet.position}` : ''}
+            <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">
+              Planets {planetList.length > 1 && (
+                <span className="text-gray-600 normal-case">({planetList.length})</span>
+              )}
             </p>
+            {planetList.length === 0 ? (
+              <p className="text-xs text-gray-600 italic">Loading...</p>
+            ) : (
+              <div className="space-y-1 max-h-48 overflow-y-auto -mx-1 px-1">
+                {planetList.map(p => {
+                  const isActive = p.id === planet?.id
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => { onSelectPlanet?.(p.id); setMenuOpen(false) }}
+                      className={`w-full text-left px-2 py-1.5 rounded transition-all border ${
+                        isActive
+                          ? 'bg-cyan-900/40 border-cyan-800'
+                          : 'border-transparent hover:bg-gray-800'
+                      }`}
+                    >
+                      <p className={`text-sm font-medium truncate ${isActive ? 'text-white' : 'text-gray-300'}`}>
+                        {p.is_homeworld ? '🏠 ' : '🌍 '}{p.name}
+                      </p>
+                      <p className="text-xs text-gray-500">[{p.galaxy}:{p.system}:{p.position}]</p>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
           </div>
 
           <nav className="p-2 space-y-1">
