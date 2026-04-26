@@ -206,7 +206,6 @@ function CombatReportCard({ report, currentUserId, onDelete }) {
 // ─── Espionage Report Card ────────────────────────────────────────────────────
 function EspionageReportCard({ report, onDelete }) {
   const [expanded, setExpanded] = useState(false)
-  console.log('Report data:', report)
   const res = report.resources_seen ?? {}
   const ships = report.ships_seen
   const defenses = report.defenses_seen
@@ -446,25 +445,39 @@ export default function Reports() {
     }
 
   async function deleteCombatReport(id) {
-    await supabase.from('combat_reports').delete().eq('id', id)
+    await supabase.from('combat_reports').delete().eq('id', id).eq('report_for', user.id)
+    await supabase.from('notifications').delete().eq('reference_id', id)
     setCombatReports(prev => prev.filter(r => r.id !== id))
   }
 
-  async function deleteEspionageReport(id) {
+ async function deleteEspionageReport(id) {
     await supabase.from('espionage_reports').delete().eq('id', id)
+    await supabase.from('notifications').delete().eq('reference_id', id)
     setEspionageReports(prev => prev.filter(r => r.id !== id))
   }
 
   async function deleteAllReports() {
     if (activeTab === 'combat') {
+      const ids = combatReports.map(r => r.id)
       await supabase.from('combat_reports')
         .delete()
-        .or(`attacker_id.eq.${user.id},defender_id.eq.${user.id}`)
+        .eq('report_for', user.id)
+      if (ids.length > 0) {
+        await supabase.from('notifications')
+          .delete()
+          .in('reference_id', ids)
+      }
       setCombatReports([])
     } else {
+      const ids = espionageReports.map(r => r.id)
       await supabase.from('espionage_reports')
         .delete()
         .eq('spy_owner_id', user.id)
+      if (ids.length > 0) {
+        await supabase.from('notifications')
+          .delete()
+          .in('reference_id', ids)
+      }
       setEspionageReports([])
     }
   }

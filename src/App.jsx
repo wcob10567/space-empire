@@ -115,11 +115,17 @@ function Game() {
     return () => clearInterval(interval)
   }, [resources, buildings, getProduction])
 
-  // Process arrived fleets and restock NPCs
+// Process arrived fleets and restock NPCs
   useEffect(() => {
-    if (!user) return
+    if (!user || !planet) return
     async function processFleets() {
       await supabase.rpc('process_arrived_fleets')
+      // Refresh ships after processing in case any fleets returned
+      const { data } = await supabase
+        .from('ships')
+        .select('*')
+        .eq('planet_id', planet.id)
+      if (data) setShips(data)
     }
     async function restockNpcs() {
       await supabase.rpc('restock_npc_resources')
@@ -132,7 +138,7 @@ function Game() {
       clearInterval(fleetInterval)
       clearInterval(npcInterval)
     }
-  }, [user])
+  }, [user, planet])
 
   // Listen for navigation events from galaxy map
   useEffect(() => {

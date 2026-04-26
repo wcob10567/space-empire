@@ -409,12 +409,11 @@ export default function Fleet({ planet, ships, resources, research, setShips }) 
   const [pendingMission, setPendingMission] = useState(null)
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
+useEffect(() => {
     if (!user?.id) return
-    supabase.rpc('process_arrived_fleets')
     loadFleets()
+    // ✅ Only poll for fleet status updates — App.jsx handles process_arrived_fleets
     const interval = setInterval(async () => {
-      await supabase.rpc('process_arrived_fleets')
       const { data } = await supabase
         .from('fleets')
         .select('*')
