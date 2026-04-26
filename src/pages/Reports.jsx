@@ -19,15 +19,26 @@ function formatTime(dateStr) {
   return date.toLocaleString()
 }
 
-function ShipList({ ships, label, color }) {
-  if (!ships || Object.keys(ships).length === 0) return (
+// ─── Helper to format a number with ~ if estimate ────────────────────────────
+function formatValue(value, isEstimate) {
+  if (value === undefined || value === null) return '?'
+  const num = Math.floor(value).toLocaleString()
+  return isEstimate ? `~${num}` : num
+}
+
+function ShipList({ ships, label, color, isEstimate }) {
+  if (!ships) return null
+  // Filter out the is_estimate flag key
+  const entries = Object.entries(ships).filter(([key]) => key !== 'is_estimate' && ships[key] > 0)
+  if (entries.length === 0) return (
     <p className="text-xs text-gray-600 italic">None</p>
   )
   return (
     <div className="flex flex-wrap gap-2">
-      {Object.entries(ships).map(([type, qty]) => (
-        <span key={type} className={`text-xs px-2 py-1 rounded bg-gray-800 ${color}`}>
-          {SHIP_NAMES[type] ?? type} ×{qty}
+      {entries.map(([type, qty]) => (
+        <span key={type} className={`text-xs px-2 py-1 rounded bg-gray-800 ${color} ${isEstimate ? 'opacity-80' : ''}`}>
+          {isEstimate && <span className="text-yellow-500 mr-1">~</span>}
+          {SHIP_NAMES[type] ?? type} ×{Math.floor(qty)}
         </span>
       ))}
     </div>
@@ -191,9 +202,23 @@ function CombatReportCard({ report, currentUserId, onDelete }) {
 function EspionageReportCard({ report, onDelete }) {
   const [expanded, setExpanded] = useState(false)
   const res = report.resources_seen ?? {}
+  const ships = report.ships_seen
+  const defenses = report.defenses_seen
+  const buildings = report.buildings_seen
+  const research = report.research_seen
+
+  // Check estimate flags
+  const resourcesEstimate = res.is_estimate === true
+  const shipsEstimate = ships?.is_estimate === true
+  const defensesEstimate = defenses?.is_estimate === true
+
+  // Filter out is_estimate key from display
+  const shipEntries = ships ? Object.entries(ships).filter(([k]) => k !== 'is_estimate') : null
+  const defenseEntries = defenses ? Object.entries(defenses).filter(([k]) => k !== 'is_estimate') : null
 
   return (
     <div className="bg-gray-900 border border-cyan-900/50 rounded-xl overflow-hidden">
+      {/* Header */}
       <div
         className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-800/50 transition-all"
         onClick={() => setExpanded(!expanded)}
@@ -203,15 +228,32 @@ function EspionageReportCard({ report, onDelete }) {
             <Search size={16} className="text-cyan-400" />
           </div>
           <div>
-            <p className="text-sm font-semibold text-cyan-400">🔍 Espionage Report</p>
+            <p className="text-sm font-semibold text-cyan-400">
+              🔍 Espionage Report
+              {resourcesEstimate && (
+                <span className="ml-2 text-xs text-yellow-500 font-normal">~ estimates</span>
+              )}
+            </p>
             <p className="text-xs text-gray-500 mt-0.5">{formatTime(report.created_at)}</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
           <div className="text-xs text-gray-400 hidden sm:flex gap-2">
-            {res.metal > 0 && <span>⛏️ {Math.floor(res.metal).toLocaleString()}</span>}
-            {res.crystal > 0 && <span>💎 {Math.floor(res.crystal).toLocaleString()}</span>}
-            {res.deuterium > 0 && <span>🔵 {Math.floor(res.deuterium).toLocaleString()}</span>}
+            {res.metal > 0 && (
+              <span className={resourcesEstimate ? 'text-yellow-500/70' : ''}>
+                ⛏️ {formatValue(res.metal, resourcesEstimate)}
+              </span>
+            )}
+            {res.crystal > 0 && (
+              <span className={resourcesEstimate ? 'text-yellow-500/70' : ''}>
+                💎 {formatValue(res.crystal, resourcesEstimate)}
+              </span>
+            )}
+            {res.deuterium > 0 && (
+              <span className={resourcesEstimate ? 'text-yellow-500/70' : ''}>
+                🔵 {formatValue(res.deuterium, resourcesEstimate)}
+              </span>
+            )}
           </div>
           <button
             onClick={e => { e.stopPropagation(); onDelete(report.id) }}
@@ -223,63 +265,121 @@ function EspionageReportCard({ report, onDelete }) {
         </div>
       </div>
 
+      {/* Expanded details */}
       {expanded && (
         <div className="border-t border-gray-800 p-4 space-y-3">
+
+          {/* Estimate warning */}
+          {resourcesEstimate && (
+            <div className="bg-yellow-900/20 border border-yellow-800/50 rounded-lg p-2 text-xs text-yellow-500 flex items-center gap-2">
+              <span>⚠</span>
+              <span>Values marked with ~ are estimates. Increase Espionage Tech or send more probes for exact readings.</span>
+            </div>
+          )}
+
           {/* Resources */}
           <div>
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Resources</p>
             <div className="flex gap-4 text-xs">
-              <span className="text-gray-300">⛏️ {Math.floor(res.metal ?? 0).toLocaleString()} metal</span>
-              <span className="text-gray-300">💎 {Math.floor(res.crystal ?? 0).toLocaleString()} crystal</span>
-              <span className="text-gray-300">🔵 {Math.floor(res.deuterium ?? 0).toLocaleString()} deuterium</span>
+              <span className={resourcesEstimate ? 'text-yellow-400' : 'text-gray-300'}>
+                ⛏️ {formatValue(res.metal, resourcesEstimate)} metal
+              </span>
+              <span className={resourcesEstimate ? 'text-yellow-400' : 'text-gray-300'}>
+                💎 {formatValue(res.crystal, resourcesEstimate)} crystal
+              </span>
+              <span className={resourcesEstimate ? 'text-yellow-400' : 'text-gray-300'}>
+                🔵 {formatValue(res.deuterium, resourcesEstimate)} deuterium
+              </span>
             </div>
           </div>
 
           {/* Ships */}
-          {report.ships_seen ? (
-            <div>
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Ships</p>
-              <ShipList ships={report.ships_seen} color="text-orange-300" />
-            </div>
-          ) : (
-            <p className="text-xs text-gray-600">Ships hidden — need higher Espionage Tech or more probes</p>
-          )}
+          <div>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+              Ships {shipsEstimate && <span className="text-yellow-500 font-normal normal-case">~ estimated</span>}
+            </p>
+            {ships !== null && ships !== undefined ? (
+              shipEntries && shipEntries.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {shipEntries.map(([type, qty]) => (
+                    <span key={type} className={`text-xs px-2 py-1 rounded bg-gray-800 ${shipsEstimate ? 'text-yellow-400' : 'text-orange-300'}`}>
+                      {shipsEstimate && '~'}{SHIP_NAMES[type] ?? type} ×{Math.floor(qty)}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-gray-600 italic">None</p>
+              )
+            ) : (
+              <p className="text-xs text-gray-600 italic">
+                Hidden — send more probes or increase Espionage Tech
+              </p>
+            )}
+          </div>
 
           {/* Defenses */}
-          {report.defenses_seen ? (
-            <div>
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Defenses</p>
-              <ShipList ships={report.defenses_seen} color="text-red-300" />
-            </div>
-          ) : (
-            <p className="text-xs text-gray-600">Defenses hidden — need Espionage Tech Lv. 4+</p>
-          )}
+          <div>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+              Defenses {defensesEstimate && <span className="text-yellow-500 font-normal normal-case">~ estimated</span>}
+            </p>
+            {defenses !== null && defenses !== undefined ? (
+              defenseEntries && defenseEntries.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {defenseEntries.map(([type, qty]) => (
+                    <span key={type} className={`text-xs px-2 py-1 rounded bg-gray-800 ${defensesEstimate ? 'text-yellow-400' : 'text-red-300'}`}>
+                      {defensesEstimate && '~'}{SHIP_NAMES[type] ?? type} ×{Math.floor(qty)}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-gray-600 italic">None</p>
+              )
+            ) : (
+              <p className="text-xs text-gray-600 italic">
+                Hidden — send more probes or increase Espionage Tech
+              </p>
+            )}
+          </div>
 
           {/* Buildings */}
-          {report.buildings_seen && (
+          {buildings ? (
             <div>
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Buildings</p>
               <div className="flex flex-wrap gap-2">
-                {Object.entries(report.buildings_seen).map(([type, lvl]) => (
-                  <span key={type} className="text-xs px-2 py-1 rounded bg-gray-800 text-gray-300">
-                    {type.replace(/_/g, ' ')} Lv.{lvl}
-                  </span>
-                ))}
+                {Object.entries(buildings)
+                  .filter(([k]) => k !== 'is_estimate')
+                  .map(([type, lvl]) => (
+                    <span key={type} className="text-xs px-2 py-1 rounded bg-gray-800 text-gray-300">
+                      {type.replace(/_/g, ' ')} Lv.{lvl}
+                    </span>
+                  ))}
               </div>
+            </div>
+          ) : (
+            <div>
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Buildings</p>
+              <p className="text-xs text-gray-600 italic">Hidden — need higher Espionage Tech advantage</p>
             </div>
           )}
 
           {/* Research */}
-          {report.research_seen && (
+          {research ? (
             <div>
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Research</p>
               <div className="flex flex-wrap gap-2">
-                {Object.entries(report.research_seen).map(([type, lvl]) => (
-                  <span key={type} className="text-xs px-2 py-1 rounded bg-gray-800 text-gray-300">
-                    {type.replace(/_/g, ' ')} Lv.{lvl}
-                  </span>
-                ))}
+                {Object.entries(research)
+                  .filter(([k]) => k !== 'is_estimate')
+                  .map(([type, lvl]) => (
+                    <span key={type} className="text-xs px-2 py-1 rounded bg-gray-800 text-gray-300">
+                      {type.replace(/_/g, ' ')} Lv.{lvl}
+                    </span>
+                  ))}
               </div>
+            </div>
+          ) : (
+            <div>
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Research</p>
+              <p className="text-xs text-gray-600 italic">Hidden — need higher Espionage Tech advantage</p>
             </div>
           )}
         </div>

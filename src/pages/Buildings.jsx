@@ -136,7 +136,7 @@ const BUILDINGS = [
   {
     type: 'underground_vault',
     name: 'Underground Vault',
-    category: 'Facilities',
+    category: 'Storage',
     description: 'Hides a portion of your resources from raiders. Higher levels protect more.',
     icon: '🔒',
     baseCost: { metal: 20000, crystal: 10000, deuterium: 0 },
