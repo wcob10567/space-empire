@@ -11,8 +11,9 @@ import Shipyard from './pages/Shipyard'
 import Galaxy from './pages/Galaxy'
 import Fleet from './pages/Fleet'
 import DevPanel from './components/DevPanel'
+import Reports from './pages/Reports'
 
-const TICK_INTERVAL = 5000 // update resources every 5 seconds locally
+const TICK_INTERVAL = 5000
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth()
@@ -37,7 +38,6 @@ function Game() {
   const [research, setResearch] = useState([])
   const [ships, setShips] = useState([])
 
-  // Production rates per hour
   const getProduction = useCallback((buildings) => {
     const lvl = (type) => buildings?.find(b => b.building_type === type)?.level ?? 0
     return {
@@ -48,11 +48,9 @@ function Game() {
     }
   }, [])
 
-  // Load planet, resources, buildings from Supabase
   useEffect(() => {
     if (!user) return
     async function loadGameData() {
-      // Get homeworld
       const { data: planetData } = await supabase
         .from('planets')
         .select('*')
@@ -62,7 +60,6 @@ function Game() {
       if (!planetData) return
       setPlanet(planetData)
 
-      // Get resources
       const { data: resData } = await supabase
         .from('resources')
         .select('*')
@@ -70,20 +67,19 @@ function Game() {
         .single()
       if (resData) setResources(resData)
 
-      // Get buildings
       const { data: bldData } = await supabase
         .from('buildings')
         .select('*')
         .eq('planet_id', planetData.id)
       if (bldData) setBuildings(bldData)
-      
+
       const { data: resData2 } = await supabase
         .from('research')
         .select('*')
         .eq('owner_id', user.id)
       if (resData2) setResearch(resData2)
-      
-        const { data: shipData } = await supabase
+
+      const { data: shipData } = await supabase
         .from('ships')
         .select('*')
         .eq('planet_id', planetData.id)
@@ -92,14 +88,14 @@ function Game() {
     loadGameData()
   }, [user])
 
-  // Local resource tick — updates resources every 5s without hitting DB
+  // Local resource tick
   useEffect(() => {
     if (!resources || !buildings.length) return
     const prod = getProduction(buildings)
     const interval = setInterval(() => {
       setResources(prev => {
         if (!prev) return prev
-        const tickAmount = TICK_INTERVAL / 1000 / 3600 // fraction of an hour
+        const tickAmount = TICK_INTERVAL / 1000 / 3600
         return {
           ...prev,
           metal:     Math.min(prev.metal + prod.metal * tickAmount, prev.metal_cap),
@@ -112,6 +108,34 @@ function Game() {
     return () => clearInterval(interval)
   }, [resources, buildings, getProduction])
 
+  // Process arrived fleets and restock NPCs
+  useEffect(() => {
+    if (!user) return
+    async function processFleets() {
+      await supabase.rpc('process_arrived_fleets')
+    }
+    async function restockNpcs() {
+      await supabase.rpc('restock_npc_resources')
+    }
+    processFleets()
+    restockNpcs()
+    const fleetInterval = setInterval(processFleets, 10000)
+    const npcInterval = setInterval(restockNpcs, 300000)
+    return () => {
+      clearInterval(fleetInterval)
+      clearInterval(npcInterval)
+    }
+  }, [user])
+
+  // Listen for navigation events from galaxy map
+  useEffect(() => {
+    function handleNav(e) {
+      setActivePage(e.detail)
+    }
+    window.addEventListener('navigate', handleNav)
+    return () => window.removeEventListener('navigate', handleNav)
+  }, [])
+
   function renderPage() {
     switch (activePage) {
       case 'overview':
@@ -119,13 +143,15 @@ function Game() {
       case 'buildings':
         return <Buildings planet={planet} resources={resources} buildings={buildings} setBuildings={setBuildings} setResources={setResources} />
       case 'research':
-        return <Research planet={planet} resources={resources} buildings={buildings} research={research} setResearch={setResearch} />
+        return <Research planet={planet} resources={resources} buildings={buildings} research={research} setResearch={setResearch} setResources={setResources} />
       case 'shipyard':
         return <Shipyard planet={planet} resources={resources} buildings={buildings} research={research} ships={ships} setShips={setShips} setResources={setResources} />
       case 'galaxy':
         return <Galaxy planet={planet} />
       case 'fleet':
-        return <Fleet planet={planet} ships={ships} resources={resources} research={research} setShips={setShips} />
+        return <Fleet planet={planet} ships={ships} resources={resources} research={research} setShips={setShips} setResources={setResources} />
+      case 'reports':
+        return <Reports />
       default:
         return (
           <div className="flex items-center justify-center h-64">
@@ -138,7 +164,7 @@ function Game() {
     }
   }
 
- return (
+  return (
     <GameLayout
       activePage={activePage}
       setActivePage={setActivePage}

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
-import { Send, Clock, ChevronRight, X, Rocket, Package, Search, Target, Globe, Recycle } from 'lucide-react'
+import { Send, Clock, X, Rocket, Package, Search, Target, Globe, Recycle, Home } from 'lucide-react'
 
 // ─── Ship definitions ─────────────────────────────────────────────────────────
 const SHIP_STATS = {
@@ -18,11 +18,12 @@ const SHIP_STATS = {
 }
 
 const MISSIONS = [
-  { type: 'attack',    label: 'Attack',    icon: Target,  color: 'text-red-400',    bg: 'bg-red-900/30 border-red-800',       desc: 'Send fleet to attack a target planet.'          },
-  { type: 'transport', label: 'Transport', icon: Package, color: 'text-yellow-400', bg: 'bg-yellow-900/30 border-yellow-800', desc: 'Send resources to another planet.'               },
-  { type: 'espionage', label: 'Espionage', icon: Search,  color: 'text-cyan-400',   bg: 'bg-cyan-900/30 border-cyan-800',     desc: 'Send probes to spy on a target.'                },
-  { type: 'colonize',  label: 'Colonize',  icon: Globe,   color: 'text-green-400',  bg: 'bg-green-900/30 border-green-800',   desc: 'Send a colony ship to settle a new planet.'     },
-  { type: 'harvest',   label: 'Harvest',   icon: Recycle, color: 'text-orange-400', bg: 'bg-orange-900/30 border-orange-800', desc: 'Send recyclers to harvest a debris field.'      },
+  { type: 'attack',    label: 'Attack',    icon: Target,  color: 'text-red-400',    bg: 'bg-red-900/30 border-red-800'       },
+  { type: 'espionage', label: 'Espionage', icon: Search,  color: 'text-cyan-400',   bg: 'bg-cyan-900/30 border-cyan-800'     },
+  { type: 'transport', label: 'Transport', icon: Package, color: 'text-yellow-400', bg: 'bg-yellow-900/30 border-yellow-800' },
+  { type: 'colonize',  label: 'Colonize',  icon: Globe,   color: 'text-green-400',  bg: 'bg-green-900/30 border-green-800'   },
+  { type: 'harvest',   label: 'Harvest',   icon: Recycle, color: 'text-orange-400', bg: 'bg-orange-900/30 border-orange-800' },
+  { type: 'defend',    label: 'Defend',    icon: Home,    color: 'text-blue-400',   bg: 'bg-blue-900/30 border-blue-800'     },
 ]
 
 function formatTime(seconds) {
@@ -51,7 +52,8 @@ function calcFlightTime(originPlanet, targetCoords, ships, researchMap) {
     }
   })
   if (minSpeed === Infinity) return 0
-  return Math.max(60, Math.floor((10 + (35000 / 500) * Math.sqrt(distance * 10 / minSpeed)) * 3600 / 3600))
+  const devSpeed = import.meta.env.DEV ? (window.__devSpeed ?? 1) : 1
+  return Math.max(5, Math.floor((10 + (35000 / 500) * Math.sqrt(distance * 10 / minSpeed)) * devSpeed))
 }
 
 // ─── Active Fleet Card ────────────────────────────────────────────────────────
@@ -68,16 +70,15 @@ function FleetCard({ fleet }) {
 
   const mission = MISSIONS.find(m => m.type === fleet.mission_type)
   const Icon = mission?.icon ?? Rocket
-  const ships = fleet.ship_payload ?? {}
-  const shipList = Object.entries(ships).filter(([, q]) => q > 0)
+  const shipList = Object.entries(fleet.ship_payload ?? {}).filter(([, q]) => q > 0)
 
   return (
     <div className={`bg-gray-900 border rounded-xl p-4 ${mission?.bg ?? 'border-gray-800'}`}>
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-2">
           <Icon size={16} className={mission?.color ?? 'text-gray-400'} />
-          <span className={`text-sm font-semibold capitalize ${mission?.color ?? 'text-gray-300'}`}>
-            {fleet.is_returning ? 'Returning' : mission?.label ?? fleet.mission_type}
+          <span className={`text-sm font-semibold ${mission?.color ?? 'text-gray-300'}`}>
+            {fleet.is_returning ? '← Returning Home' : mission?.label ?? fleet.mission_type}
           </span>
         </div>
         <div className="flex items-center gap-2 text-xs text-gray-400">
@@ -103,13 +104,12 @@ function FleetCard({ fleet }) {
   )
 }
 
-// ─── Dispatch Form ────────────────────────────────────────────────────────────
-function DispatchForm({ planet, ships, resources, research, onDispatch, onClose }) {
+// ─── Quick Dispatch Form (pre-filled from galaxy map) ─────────────────────────
+function QuickDispatchForm({ planet, ships, resources, research, pendingMission, onDispatch, onClose }) {
   const { user } = useAuth()
-  const [step, setStep] = useState(1)
   const [selectedShips, setSelectedShips] = useState({})
-  const [target, setTarget] = useState({ galaxy: planet?.galaxy ?? 1, system: planet?.system ?? 1, position: 1 })
-  const [mission, setMission] = useState('attack')
+  const [mission, setMission] = useState(pendingMission?.type ?? 'attack')
+  const [target, setTarget] = useState(pendingMission?.target ?? { galaxy: 1, system: 1, position: 1 })
   const [cargo, setCargo] = useState({ metal: 0, crystal: 0, deuterium: 0 })
   const [sending, setSending] = useState(false)
 
@@ -121,10 +121,16 @@ function DispatchForm({ planet, ships, resources, research, onDispatch, onClose 
   const flightTime = calcFlightTime(planet, target, selectedShips, researchMap)
   const totalCargo = Object.entries(selectedShips).reduce((sum, [type, qty]) => sum + (SHIP_STATS[type]?.cargo ?? 0) * qty, 0)
   const usedCargo = cargo.metal + cargo.crystal + cargo.deuterium
+  const missionInfo = MISSIONS.find(m => m.type === mission)
+
+  // Fleets that return home: all except defend and transport to own planet
+  const returnsHome = !['defend'].includes(mission)
 
   async function handleSend() {
     if (totalSelected === 0 || sending) return
     setSending(true)
+
+    const devSpeed = import.meta.env.DEV ? (window.__devSpeed ?? 1) : 1
     const departsAt = new Date().toISOString()
     const arrivesAt = new Date(Date.now() + flightTime * 1000).toISOString()
     const returnsAt = new Date(Date.now() + flightTime * 2000).toISOString()
@@ -136,6 +142,12 @@ function DispatchForm({ planet, ships, resources, research, onDispatch, onClose 
       .eq('system', target.system)
       .eq('position', target.position)
       .single()
+
+    if (!targetPlanet && mission !== 'colonize') {
+      alert(`No planet found at [${target.galaxy}:${target.system}:${target.position}]. Select a valid target on the galaxy map.`)
+      setSending(false)
+      return
+    }
 
     await supabase.from('fleets').insert({
       owner_id: user?.id,
@@ -150,6 +162,7 @@ function DispatchForm({ planet, ships, resources, research, onDispatch, onClose 
       status: 'in_flight',
     })
 
+    // Deduct ships from planet
     for (const [type, qty] of Object.entries(selectedShips)) {
       if (qty <= 0) continue
       const ship = ships.find(s => s.ship_type === type)
@@ -166,138 +179,147 @@ function DispatchForm({ planet, ships, resources, research, onDispatch, onClose 
   return (
     <div className="bg-gray-900 border border-cyan-900/50 rounded-2xl p-5 space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-white font-bold flex items-center gap-2"><Send size={16} className="text-cyan-400" /> Dispatch Fleet</h3>
+        <h3 className="text-white font-bold flex items-center gap-2">
+          <Send size={16} className="text-cyan-400" /> Dispatch Fleet
+        </h3>
         <button onClick={onClose} className="text-gray-500 hover:text-white"><X size={18} /></button>
       </div>
 
-      {/* Steps */}
-      <div className="flex items-center gap-2 text-xs">
-        {['Ships', 'Target', 'Mission'].map((s, i) => (
-          <div key={s} className="flex items-center gap-2">
-            <div className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs transition-all ${step === i + 1 ? 'bg-cyan-600 text-white' : step > i + 1 ? 'bg-cyan-900 text-cyan-400' : 'bg-gray-800 text-gray-600'}`}>{i + 1}</div>
-            <span className={step === i + 1 ? 'text-white' : 'text-gray-600'}>{s}</span>
-            {i < 2 && <ChevronRight size={12} className="text-gray-700" />}
-          </div>
-        ))}
+      {/* Target coordinates */}
+      <div className="bg-gray-800 rounded-xl p-3">
+        <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Target</p>
+        <div className="grid grid-cols-3 gap-2">
+          {['galaxy', 'system', 'position'].map(field => (
+            <div key={field}>
+              <label className="text-xs text-gray-500 capitalize block mb-1">{field}</label>
+              <input
+                type="number"
+                min={1} max={field === 'galaxy' ? 5 : field === 'position' ? 15 : 499}
+                value={target[field]}
+                onChange={e => setTarget(p => ({ ...p, [field]: parseInt(e.target.value) || 1 }))}
+                className="w-full bg-gray-700 text-white text-center rounded-lg px-2 py-1.5 text-sm"
+              />
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-gray-600 mt-2">
+          Coordinates: <span className="text-cyan-400 font-mono">[{target.galaxy}:{target.system}:{target.position}]</span>
+          {flightTime > 0 && <span className="ml-2">· Flight time: <span className="text-cyan-400 font-mono">{formatTime(flightTime)}</span></span>}
+          {returnsHome && <span className="ml-2 text-green-600">· Returns automatically</span>}
+        </p>
       </div>
 
-      {/* Step 1 — Ships */}
-      {step === 1 && (
-        <div className="space-y-3">
-          <p className="text-xs text-gray-500">Select ships to send</p>
-          {availableShips.length === 0 && (
-            <div className="text-center py-6 text-gray-600 text-sm">No ships available. Build ships in the Shipyard first.</div>
-          )}
-          {availableShips.map(ship => {
-            const stats = SHIP_STATS[ship.ship_type]
-            if (!stats) return null
-            const selected = selectedShips[ship.ship_type] ?? 0
-            return (
-              <div key={ship.ship_type} className="flex items-center gap-3 bg-gray-800 rounded-lg p-3">
-                <span className="text-xl">{stats.icon}</span>
-                <div className="flex-1">
-                  <p className="text-sm text-white">{stats.name}</p>
-                  <p className="text-xs text-gray-500">Available: {ship.quantity} · Cargo: {stats.cargo.toLocaleString()}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => setSelectedShips(p => ({ ...p, [ship.ship_type]: Math.max(0, (p[ship.ship_type] ?? 0) - 1) }))} className="w-7 h-7 bg-gray-700 hover:bg-gray-600 rounded text-white flex items-center justify-center">-</button>
-                  <input
-                    type="number" min={0} max={ship.quantity}
-                    value={selected}
-                    onChange={e => setSelectedShips(p => ({ ...p, [ship.ship_type]: Math.min(ship.quantity, Math.max(0, parseInt(e.target.value) || 0)) }))}
-                    className="w-16 bg-gray-700 text-white text-center text-sm rounded px-2 py-1"
-                  />
-                  <button onClick={() => setSelectedShips(p => ({ ...p, [ship.ship_type]: ship.quantity }))} className="px-2 h-7 bg-gray-700 hover:bg-gray-600 rounded text-white text-xs">All</button>
-                </div>
-              </div>
-            )
-          })}
-          {totalSelected > 0 && (
-            <div className="text-xs text-gray-500">
-              Flight time: <span className="text-cyan-400 font-mono">{formatTime(flightTime)}</span>
-              · Cargo: <span className="text-yellow-400">{totalCargo.toLocaleString()}</span>
-            </div>
-          )}
-          <button onClick={() => setStep(2)} disabled={totalSelected === 0}
-            className={`w-full py-2 rounded-lg text-sm font-semibold transition-all ${totalSelected > 0 ? 'bg-cyan-700 hover:bg-cyan-600 text-white' : 'bg-gray-800 text-gray-600 cursor-not-allowed'}`}>
-            Next: Select Target →
-          </button>
-        </div>
-      )}
-
-      {/* Step 2 — Target */}
-      {step === 2 && (
-        <div className="space-y-3">
-          <p className="text-xs text-gray-500">Enter target coordinates</p>
-          <div className="grid grid-cols-3 gap-3">
-            {['galaxy', 'system', 'position'].map(field => (
-              <div key={field}>
-                <label className="text-xs text-gray-500 capitalize block mb-1">{field}</label>
-                <input
-                  type="number"
-                  min={1} max={field === 'galaxy' ? 5 : field === 'position' ? 15 : 499}
-                  value={target[field]}
-                  onChange={e => setTarget(p => ({ ...p, [field]: parseInt(e.target.value) || 1 }))}
-                  className="w-full bg-gray-800 text-white text-center rounded-lg px-3 py-2 text-sm"
-                />
-              </div>
-            ))}
-          </div>
-          <div className="text-xs text-gray-500">
-            Target: <span className="text-cyan-400 font-mono">[{target.galaxy}:{target.system}:{target.position}]</span>
-            · Flight time: <span className="text-cyan-400 font-mono">{formatTime(flightTime)}</span>
-          </div>
-          <div className="flex gap-2">
-            <button onClick={() => setStep(1)} className="flex-1 py-2 rounded-lg text-sm bg-gray-800 text-gray-400 hover:text-white">← Back</button>
-            <button onClick={() => setStep(3)} className="flex-1 py-2 rounded-lg text-sm bg-cyan-700 hover:bg-cyan-600 text-white font-semibold">Next: Mission →</button>
-          </div>
-        </div>
-      )}
-
-      {/* Step 3 — Mission */}
-      {step === 3 && (
-        <div className="space-y-3">
-          <p className="text-xs text-gray-500">Select mission type</p>
-          <div className="grid grid-cols-1 gap-2">
-            {MISSIONS.map(m => (
-              <button key={m.type} onClick={() => setMission(m.type)}
-                className={`flex items-center gap-3 p-3 rounded-lg border text-left transition-all ${mission === m.type ? m.bg : 'border-gray-800 bg-gray-800/50 hover:border-gray-700'}`}>
-                <m.icon size={16} className={m.color} />
-                <div>
-                  <p className={`text-sm font-semibold ${m.color}`}>{m.label}</p>
-                  <p className="text-xs text-gray-500">{m.desc}</p>
-                </div>
-              </button>
-            ))}
-          </div>
-
-          {mission === 'transport' && (
-            <div className="space-y-2">
-              <p className="text-xs text-gray-500">Cargo ({usedCargo.toLocaleString()} / {totalCargo.toLocaleString()})</p>
-              {['metal', 'crystal', 'deuterium'].map(res => (
-                <div key={res} className="flex items-center gap-3">
-                  <span className="text-xs text-gray-400 w-20 capitalize">{res}</span>
-                  <input type="number" min={0}
-                    max={Math.min(resources?.[res] ?? 0, totalCargo - usedCargo + (cargo[res] ?? 0))}
-                    value={cargo[res]}
-                    onChange={e => setCargo(p => ({ ...p, [res]: Math.max(0, parseInt(e.target.value) || 0) }))}
-                    className="flex-1 bg-gray-800 text-white rounded px-3 py-1.5 text-sm"
-                  />
-                  <span className="text-xs text-gray-600">/ {(resources?.[res] ?? 0).toLocaleString()}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="flex gap-2">
-            <button onClick={() => setStep(2)} className="flex-1 py-2 rounded-lg text-sm bg-gray-800 text-gray-400 hover:text-white">← Back</button>
-            <button onClick={handleSend} disabled={sending}
-              className="flex-1 py-2 rounded-lg text-sm bg-cyan-700 hover:bg-cyan-600 text-white font-semibold disabled:opacity-50">
-              {sending ? 'Launching...' : '🚀 Launch Fleet'}
+      {/* Mission type */}
+      <div>
+        <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Mission</p>
+        <div className="grid grid-cols-3 gap-2">
+          {MISSIONS.map(m => (
+            <button key={m.type} onClick={() => setMission(m.type)}
+              className={`flex items-center gap-2 p-2 rounded-lg border text-xs font-medium transition-all ${mission === m.type ? m.bg : 'border-gray-800 bg-gray-800/50 hover:border-gray-700'}`}>
+              <m.icon size={14} className={m.color} />
+              <span className={m.color}>{m.label}</span>
             </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Ship selection */}
+      <div>
+        <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">
+          Ships — <span className="text-yellow-400">{totalSelected} selected</span>
+          {totalCargo > 0 && <span className="text-gray-600 ml-2">· Cargo: {totalCargo.toLocaleString()}</span>}
+        </p>
+        {availableShips.length === 0 ? (
+          <p className="text-xs text-gray-600 text-center py-4">No ships available. Build ships in the Shipyard first.</p>
+        ) : (
+          <div className="space-y-2 max-h-64 overflow-y-auto">
+            {availableShips.map(ship => {
+              const stats = SHIP_STATS[ship.ship_type]
+              if (!stats) return null
+              const selected = selectedShips[ship.ship_type] ?? 0
+              return (
+                <div key={ship.ship_type} className="flex items-center gap-3 bg-gray-800 rounded-lg px-3 py-2">
+                  <span className="text-lg">{stats.icon}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-white truncate">{stats.name}</p>
+                    <p className="text-xs text-gray-500">×{ship.quantity} available</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button onClick={() => setSelectedShips(p => ({ ...p, [ship.ship_type]: Math.max(0, (p[ship.ship_type] ?? 0) - 1) }))}
+                      className="w-6 h-6 bg-gray-700 hover:bg-gray-600 rounded text-white flex items-center justify-center text-sm">-</button>
+                    <input type="number" min={0} max={ship.quantity} value={selected}
+                      onChange={e => setSelectedShips(p => ({ ...p, [ship.ship_type]: Math.min(ship.quantity, Math.max(0, parseInt(e.target.value) || 0)) }))}
+                      className="w-14 bg-gray-700 text-white text-center text-xs rounded px-1 py-1" />
+                    <button onClick={() => setSelectedShips(p => ({ ...p, [ship.ship_type]: ship.quantity }))}
+                      className="px-2 h-6 bg-gray-700 hover:bg-gray-600 rounded text-white text-xs">All</button>
+                  </div>
+                </div>
+              )
+            })}
           </div>
+        )}
+      </div>
+
+      {/* Cargo for transport */}
+      {mission === 'transport' && (
+        <div className="space-y-2">
+          <p className="text-xs text-gray-500 uppercase tracking-wide">Cargo ({usedCargo.toLocaleString()} / {totalCargo.toLocaleString()})</p>
+          {['metal', 'crystal', 'deuterium'].map(res => (
+            <div key={res} className="flex items-center gap-3">
+              <span className="text-xs text-gray-400 w-20 capitalize">{res}</span>
+              <input type="number" min={0}
+                max={Math.min(resources?.[res] ?? 0, totalCargo - usedCargo + (cargo[res] ?? 0))}
+                value={cargo[res]}
+                onChange={e => setCargo(p => ({ ...p, [res]: Math.max(0, parseInt(e.target.value) || 0) }))}
+                className="flex-1 bg-gray-800 text-white rounded px-3 py-1.5 text-sm" />
+              <span className="text-xs text-gray-600">/ {(resources?.[res] ?? 0).toLocaleString()}</span>
+            </div>
+          ))}
         </div>
       )}
+
+      <button onClick={handleSend} disabled={totalSelected === 0 || sending}
+        className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold transition-all ${
+          totalSelected > 0 && !sending
+            ? `${missionInfo?.bg ?? 'bg-cyan-700'} text-white hover:opacity-90`
+            : 'bg-gray-800 text-gray-600 cursor-not-allowed'
+        }`}>
+        {missionInfo?.icon && <missionInfo.icon size={16} className={missionInfo.color} />}
+        {sending ? 'Launching...' : `Launch ${missionInfo?.label ?? 'Fleet'}`}
+      </button>
+    </div>
+  )
+}
+
+// ─── Ships on Planet Panel ────────────────────────────────────────────────────
+function ShipsOnPlanet({ ships, planet }) {
+  const ownedShips = ships?.filter(s => s.quantity > 0) ?? []
+  if (ownedShips.length === 0) return (
+    <div className="text-center py-6 border border-dashed border-gray-800 rounded-xl">
+      <p className="text-gray-600 text-xs">No ships on this planet</p>
+    </div>
+  )
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+      <p className="text-xs text-gray-500 uppercase tracking-wide mb-3 flex items-center gap-2">
+        <Rocket size={12} className="text-cyan-400" />
+        Ships at {planet?.name ?? 'Homeworld'}
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {ownedShips.map(ship => {
+          const stats = SHIP_STATS[ship.ship_type]
+          if (!stats) return null
+          return (
+            <div key={ship.ship_type} className="flex items-center gap-2 bg-gray-800 px-3 py-2 rounded-lg">
+              <span className="text-base">{stats.icon}</span>
+              <div>
+                <p className="text-xs text-white">{stats.name}</p>
+                <p className="text-xs text-cyan-400 font-bold">×{ship.quantity.toLocaleString()}</p>
+              </div>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -307,12 +329,22 @@ export default function Fleet({ planet, ships, resources, research, setShips }) 
   const { user } = useAuth()
   const [fleets, setFleets] = useState([])
   const [showDispatch, setShowDispatch] = useState(false)
+  const [pendingMission, setPendingMission] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     if (!user?.id) return
     loadFleets()
   }, [user?.id])
+
+  // Pick up pending mission from galaxy map
+  useEffect(() => {
+    if (window.__pendingMission) {
+      setPendingMission(window.__pendingMission)
+      setShowDispatch(true)
+      window.__pendingMission = null
+    }
+  }, [])
 
   async function loadFleets() {
     setLoading(true)
@@ -328,6 +360,7 @@ export default function Fleet({ planet, ships, resources, research, setShips }) 
 
   async function handleDispatch() {
     setShowDispatch(false)
+    setPendingMission(null)
     await loadFleets()
     const { data } = await supabase.from('ships').select('*').eq('planet_id', planet.id)
     if (data) setShips(data)
@@ -337,6 +370,7 @@ export default function Fleet({ planet, ships, resources, research, setShips }) 
 
   return (
     <div className="space-y-6 w-full">
+      {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <Rocket size={20} className="text-cyan-400" />
@@ -344,9 +378,11 @@ export default function Fleet({ planet, ships, resources, research, setShips }) 
           <span className="text-xs text-gray-500">{fleets.length} / {totalFleetSlots} slots used</span>
         </div>
         <button
-          onClick={() => setShowDispatch(!showDispatch)}
+          onClick={() => { setPendingMission(null); setShowDispatch(!showDispatch) }}
           disabled={fleets.length >= totalFleetSlots}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${fleets.length < totalFleetSlots ? 'bg-cyan-700 hover:bg-cyan-600 text-white' : 'bg-gray-800 text-gray-600 cursor-not-allowed'}`}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+            fleets.length < totalFleetSlots ? 'bg-cyan-700 hover:bg-cyan-600 text-white' : 'bg-gray-800 text-gray-600 cursor-not-allowed'
+          }`}
         >
           <Send size={16} />
           {showDispatch ? 'Cancel' : 'Dispatch Fleet'}
@@ -355,21 +391,27 @@ export default function Fleet({ planet, ships, resources, research, setShips }) 
 
       {fleets.length >= totalFleetSlots && (
         <div className="bg-yellow-900/20 border border-yellow-800/50 rounded-xl p-3 text-xs text-yellow-400">
-          All fleet slots used. Research Computer Technology to unlock more slots.
+          All fleet slots used. Research Computer Technology to unlock more.
         </div>
       )}
 
+      {/* Ships on planet */}
+      <ShipsOnPlanet ships={ships} planet={planet} />
+
+      {/* Dispatch form */}
       {showDispatch && (
-        <DispatchForm
+        <QuickDispatchForm
           planet={planet}
           ships={ships}
           resources={resources}
           research={research}
+          pendingMission={pendingMission}
           onDispatch={handleDispatch}
-          onClose={() => setShowDispatch(false)}
+          onClose={() => { setShowDispatch(false); setPendingMission(null) }}
         />
       )}
 
+      {/* Active fleets */}
       <div>
         <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">Active Fleets</h3>
         {loading ? (
@@ -378,7 +420,7 @@ export default function Fleet({ planet, ships, resources, research, setShips }) 
           <div className="text-center py-12 border border-dashed border-gray-800 rounded-2xl">
             <Rocket size={32} className="text-gray-700 mx-auto mb-3" />
             <p className="text-gray-600 text-sm">No active fleets</p>
-            <p className="text-gray-700 text-xs mt-1">Dispatch a fleet to begin your conquest</p>
+            <p className="text-gray-700 text-xs mt-1">Dispatch a fleet or launch an attack from the Galaxy map</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

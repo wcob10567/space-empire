@@ -68,7 +68,6 @@ function GalaxyCanvas({ galaxy, myPlanet, occupiedSystems, selectedSystem, onSel
     ctx.fillStyle = '#030712'
     ctx.fillRect(0, 0, W, H)
 
-    // bg stars
     for (let i = 0; i < 250; i++) {
       const bx = ((i * 7919 + 1234) % CANVAS_W) * zoom + pan.x
       const by = ((i * 6271 + 5678) % CANVAS_H) * zoom + pan.y
@@ -249,7 +248,78 @@ function GalaxyCanvas({ galaxy, myPlanet, occupiedSystems, selectedSystem, onSel
   )
 }
 
-// ─── System View ──────────────────────────────────────────────────────────────
+// ─── Planet Panel ─────────────────────────────────────────────────────────────
+function PlanetPanel({ position, planet, isOwn, onClose, onAction }) {
+  const config = PLANET_CONFIGS[position - 1]
+  return (
+    <div className="bg-gray-900 border border-cyan-900/50 rounded-xl p-4 w-64 shrink-0">
+      <div className="flex items-start justify-between mb-3">
+        <div>
+          <p className="text-xs text-gray-500 uppercase tracking-wide">Position {position}</p>
+          {planet
+            ? <><h3 className="text-white font-bold mt-1">{planet.name}</h3>
+                <p className="text-xs mt-0.5" style={{ color: isOwn ? '#00e5ff' : '#ff8888' }}>
+                  {isOwn ? '👑 Your Planet' : `Cmdr: ${planet.ownerName ?? 'Unknown'}`}
+                </p></>
+            : <h3 className="text-gray-500 font-bold mt-1">Empty Slot</h3>}
+        </div>
+        <button onClick={onClose} className="text-gray-600 hover:text-white text-xl leading-none">×</button>
+      </div>
+
+      {planet && (
+        <div className="space-y-1.5 mb-3 text-xs">
+          <div className="flex justify-between"><span className="text-gray-500">Type</span><span className="text-gray-300 capitalize">{config.type}</span></div>
+          <div className="flex justify-between"><span className="text-gray-500">Diameter</span><span className="text-gray-300">{planet.diameter?.toLocaleString() ?? '12,800'} km</span></div>
+          <div className="flex justify-between"><span className="text-gray-500">Temp</span><span className="text-gray-300">{planet.temperature ?? 20}°C</span></div>
+          <div className="flex justify-between"><span className="text-gray-500">Fields</span><span className="text-gray-300">{planet.used_fields ?? 0} / {planet.max_fields ?? 163}</span></div>
+        </div>
+      )}
+
+      {planet && !isOwn && (
+        <div className="space-y-2">
+          <button
+            onClick={() => onAction('espionage', planet)}
+            className="w-full flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-xs transition-all"
+          >
+            <Search size={14} className="text-cyan-400" /> Send Espionage Probe
+          </button>
+          <button
+            onClick={() => onAction('attack', planet)}
+            className="w-full flex items-center gap-2 px-3 py-2 bg-red-900/50 hover:bg-red-800/50 text-red-300 rounded-lg text-xs transition-all"
+          >
+            <Target size={14} className="text-red-400" /> Launch Attack
+          </button>
+          <button
+            onClick={() => onAction('transport', planet)}
+            className="w-full flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-xs transition-all"
+          >
+            <Package size={14} className="text-yellow-400" /> Send Transport
+          </button>
+        </div>
+      )}
+
+      {planet && isOwn && (
+        <div className="bg-cyan-950/30 border border-cyan-900/50 rounded-lg p-3 text-xs text-cyan-400">
+          This is your planet. Manage it from Overview.
+        </div>
+      )}
+
+      {!planet && (
+        <div className="space-y-2">
+          <p className="text-xs text-gray-500 mb-2">This position is unoccupied.</p>
+          <button
+            onClick={() => onAction('colonize', null)}
+            className="w-full flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-xs transition-all"
+          >
+            <Send size={14} className="text-green-400" /> Send Colony Ship
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Planet Component ─────────────────────────────────────────────────────────
 function PlanetComp({ config, position, planet, isOwn, isSelected, onClick }) {
   const hasOwner = !!planet
   const borderColor = isOwn ? '#00e5ff' : hasOwner ? '#ff4444' : 'transparent'
@@ -275,46 +345,8 @@ function PlanetComp({ config, position, planet, isOwn, isSelected, onClick }) {
   )
 }
 
-function PlanetPanel({ position, planet, isOwn, onClose }) {
-  const config = PLANET_CONFIGS[position - 1]
-  return (
-    <div className="bg-gray-900 border border-cyan-900/50 rounded-xl p-4 w-64 shrink-0">
-      <div className="flex items-start justify-between mb-3">
-        <div>
-          <p className="text-xs text-gray-500 uppercase tracking-wide">Position {position}</p>
-          {planet
-            ? <><h3 className="text-white font-bold mt-1">{planet.name}</h3><p className="text-xs mt-0.5" style={{ color: isOwn ? '#00e5ff' : '#ff8888' }}>{isOwn ? '👑 Your Planet' : `Cmdr: ${planet.ownerName ?? 'Unknown'}`}</p></>
-            : <h3 className="text-gray-500 font-bold mt-1">Empty Slot</h3>}
-        </div>
-        <button onClick={onClose} className="text-gray-600 hover:text-white text-xl leading-none">×</button>
-      </div>
-      {planet && (
-        <div className="space-y-1.5 mb-3 text-xs">
-          <div className="flex justify-between"><span className="text-gray-500">Type</span><span className="text-gray-300 capitalize">{config.type}</span></div>
-          <div className="flex justify-between"><span className="text-gray-500">Diameter</span><span className="text-gray-300">{planet.diameter?.toLocaleString() ?? '12,800'} km</span></div>
-          <div className="flex justify-between"><span className="text-gray-500">Temp</span><span className="text-gray-300">{planet.temperature ?? 20}°C</span></div>
-          <div className="flex justify-between"><span className="text-gray-500">Fields</span><span className="text-gray-300">{planet.used_fields ?? 0} / {planet.max_fields ?? 163}</span></div>
-        </div>
-      )}
-      {planet && !isOwn && (
-        <div className="space-y-2">
-          <button className="w-full flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-xs transition-all" onClick={() => alert('Coming soon!')}><Search size={14} className="text-cyan-400" />Send Espionage Probe</button>
-          <button className="w-full flex items-center gap-2 px-3 py-2 bg-red-900/50 hover:bg-red-800/50 text-red-300 rounded-lg text-xs transition-all" onClick={() => alert('Coming soon!')}><Target size={14} className="text-red-400" />Launch Attack</button>
-          <button className="w-full flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-xs transition-all" onClick={() => alert('Coming soon!')}><Package size={14} className="text-yellow-400" />Send Transport</button>
-        </div>
-      )}
-      {planet && isOwn && <div className="bg-cyan-950/30 border border-cyan-900/50 rounded-lg p-3 text-xs text-cyan-400">This is your planet. Manage it from Overview.</div>}
-      {!planet && (
-        <div className="space-y-2">
-          <p className="text-xs text-gray-500 mb-2">This position is unoccupied.</p>
-          <button className="w-full flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-xs transition-all" onClick={() => alert('Coming soon!')}><Send size={14} className="text-green-400" />Send Colony Ship</button>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function SystemView({ galaxy, system, myPlanet }) {
+// ─── System View ──────────────────────────────────────────────────────────────
+function SystemView({ galaxy, system, myPlanet, onAction }) {
   const { user } = useAuth()
   const [systemData, setSystemData] = useState({})
   const [loading, setLoading] = useState(true)
@@ -347,7 +379,6 @@ function SystemView({ galaxy, system, myPlanet }) {
 
   return (
     <div className="mt-4 space-y-3">
-      {/* System header */}
       <div className="flex items-center gap-3">
         <span className="text-cyan-400 font-mono font-bold text-sm">[{galaxy}:{system}]</span>
         <span className="text-gray-500 text-xs">{starConfig.type} Star System</span>
@@ -355,27 +386,19 @@ function SystemView({ galaxy, system, myPlanet }) {
       </div>
 
       <div className="flex gap-4">
-        {/* System canvas */}
         <div className="flex-1 bg-gray-950 border border-gray-800/50 rounded-2xl overflow-hidden relative" style={{ height: 280 }}>
-          {/* Starfield */}
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             {[...Array(80)].map((_, i) => (
               <div key={i} className="absolute rounded-full bg-white" style={{ width: Math.random() * 1.5 + 0.5 + 'px', height: Math.random() * 1.5 + 0.5 + 'px', top: Math.random() * 100 + '%', left: Math.random() * 100 + '%', opacity: Math.random() * 0.4 + 0.1 }} />
             ))}
           </div>
-
           <div className="absolute top-3 left-3 text-xs text-gray-600">{starConfig.type} · System [{galaxy}:{system}]</div>
-
-          {/* Solar system layout */}
           <div className="flex items-center h-full px-4 overflow-x-auto">
-            {/* Star */}
             <div className="shrink-0 mr-4 relative flex items-center justify-center" style={{ width: 110, height: 110 }}>
               <div className="absolute rounded-full animate-pulse" style={{ width: starConfig.size * 2, height: starConfig.size * 2, background: `radial-gradient(circle, ${starConfig.glow}22 0%, transparent 70%)` }} />
               <div className="absolute rounded-full" style={{ width: starConfig.size * 1.4, height: starConfig.size * 1.4, background: `radial-gradient(circle, ${starConfig.glow}44 0%, transparent 70%)` }} />
               <div className="absolute rounded-full" style={{ width: starConfig.size * 0.7, height: starConfig.size * 0.7, background: `radial-gradient(circle at 35% 35%, white, ${starConfig.color} 40%, ${starConfig.glow} 100%)`, boxShadow: `0 0 20px ${starConfig.glow}` }} />
             </div>
-
-            {/* Orbit line + planets */}
             <div className="flex-1 relative flex items-center">
               <div className="absolute top-1/2 left-0 right-0 h-px bg-gray-800/40" />
               <div className="flex items-end gap-3 relative z-10 w-full justify-between px-1">
@@ -397,7 +420,6 @@ function SystemView({ galaxy, system, myPlanet }) {
               </div>
             </div>
           </div>
-
           <div className="absolute bottom-3 right-3 flex items-center gap-3 text-xs text-gray-600">
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-cyan-400 inline-block" /> Yours</span>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400 inline-block" /> Enemy</span>
@@ -405,13 +427,13 @@ function SystemView({ galaxy, system, myPlanet }) {
           </div>
         </div>
 
-        {/* Planet panel */}
         {selectedPos && (
           <PlanetPanel
             position={selectedPos}
             planet={selectedPlanet}
             isOwn={selectedPlanet?.owner_id === user?.id}
             onClose={() => { setSelectedPos(null); setSelectedPlanet(null) }}
+            onAction={onAction}
           />
         )}
       </div>
@@ -419,7 +441,7 @@ function SystemView({ galaxy, system, myPlanet }) {
   )
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
+// ─── Main Galaxy Page ─────────────────────────────────────────────────────────
 export default function Galaxy({ planet: myPlanet }) {
   const { user } = useAuth()
   const [galaxy, setGalaxy] = useState(myPlanet?.galaxy ?? 1)
@@ -442,9 +464,21 @@ export default function Galaxy({ planet: myPlanet }) {
     load()
   }, [galaxy, user])
 
+  function handleAction(type, target) {
+    window.__pendingMission = {
+      type,
+      target: target ? {
+        galaxy: target.galaxy,
+        system: target.system,
+        position: target.position,
+        name: target.name,
+      } : null,
+    }
+    window.dispatchEvent(new CustomEvent('navigate', { detail: 'fleet' }))
+  }
+
   return (
     <div className="w-full space-y-4">
-      {/* Galaxy selector */}
       <div className="flex items-center gap-3 flex-wrap">
         <span className="text-xs text-gray-500 uppercase tracking-wide">Galaxy</span>
         <div className="flex gap-1">
@@ -463,7 +497,6 @@ export default function Galaxy({ planet: myPlanet }) {
         <span className="text-xs text-gray-600 ml-auto">{Object.keys(occupiedSystems).length} occupied systems in Galaxy {galaxy}</span>
       </div>
 
-      {/* Galaxy map */}
       <GalaxyCanvas
         galaxy={galaxy}
         myPlanet={myPlanet}
@@ -472,12 +505,12 @@ export default function Galaxy({ planet: myPlanet }) {
         onSelectSystem={setSelectedSystem}
       />
 
-      {/* System view below — shows when a system is selected */}
       {selectedSystem && (
         <SystemView
           galaxy={galaxy}
           system={selectedSystem}
           myPlanet={myPlanet}
+          onAction={handleAction}
         />
       )}
     </div>
