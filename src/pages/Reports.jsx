@@ -74,9 +74,14 @@ function CombatReportCard({ report, currentUserId, onDelete }) {
             }
           </div>
           <div>
-            <p className={`text-sm font-semibold ${won ? 'text-green-400' : 'text-red-400'}`}>
+           <p className={`text-sm font-semibold ${won ? 'text-green-400' : 'text-red-400'}`}>
               {won ? '⚔️ Victory' : '💀 Defeat'} — {isAttacker ? 'Attack' : 'Defense'}
             </p>
+            {report.planets && (
+              <p className="text-xs text-gray-400/70 mt-0.5">
+                {report.planets.name} · <span className="font-mono">[{report.planets.galaxy}:{report.planets.system}:{report.planets.position}]</span>
+              </p>
+            )}
             <p className="text-xs text-gray-500 mt-0.5">{formatTime(report.created_at)}</p>
           </div>
         </div>
@@ -227,13 +232,18 @@ function EspionageReportCard({ report, onDelete }) {
           <div className="w-8 h-8 rounded-full bg-cyan-900/50 flex items-center justify-center">
             <Search size={16} className="text-cyan-400" />
           </div>
-          <div>
+         <div>
             <p className="text-sm font-semibold text-cyan-400">
               🔍 Espionage Report
               {resourcesEstimate && (
                 <span className="ml-2 text-xs text-yellow-500 font-normal">~ estimates</span>
               )}
             </p>
+            {report.planets && (
+              <p className="text-xs text-cyan-300/70 mt-0.5">
+                {report.planets.name} · <span className="font-mono">[{report.planets.galaxy}:{report.planets.system}:{report.planets.position}]</span>
+              </p>
+            )}
             <p className="text-xs text-gray-500 mt-0.5">{formatTime(report.created_at)}</p>
           </div>
         </div>
@@ -415,24 +425,24 @@ export default function Reports() {
     loadReports()
   }, [user])
 
-  async function loadReports() {
-    setLoading(true)
-    const [{ data: combat }, { data: espionage }] = await Promise.all([
-      supabase.from('combat_reports')
-        .select('*')
-        .or(`attacker_id.eq.${user.id},defender_id.eq.${user.id}`)
-        .order('created_at', { ascending: false })
-        .limit(50),
-      supabase.from('espionage_reports')
-        .select('*')
-        .eq('spy_owner_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(50),
-    ])
-    setCombatReports(combat ?? [])
-    setEspionageReports(espionage ?? [])
-    setLoading(false)
-  }
+    async function loadReports() {
+        setLoading(true)
+        const [{ data: combat }, { data: espionage }] = await Promise.all([
+        supabase.from('combat_reports')
+            .select('*, planets(name, galaxy, system, position)')
+            .or(`attacker_id.eq.${user.id},defender_id.eq.${user.id}`)
+            .order('created_at', { ascending: false })
+            .limit(50),
+        supabase.from('espionage_reports')
+            .select('*, planets(name, galaxy, system, position)')
+            .eq('spy_owner_id', user.id)
+            .order('created_at', { ascending: false })
+            .limit(50),
+        ])
+        setCombatReports(combat ?? [])
+        setEspionageReports(espionage ?? [])
+        setLoading(false)
+    }
 
   async function deleteCombatReport(id) {
     await supabase.from('combat_reports').delete().eq('id', id)
