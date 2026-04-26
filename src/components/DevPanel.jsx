@@ -5,7 +5,8 @@ import { Terminal, ChevronDown, ChevronUp, Zap, Coins, Building2, FlaskConical, 
 const BUILDING_TYPES = [
   'metal_mine', 'crystal_mine', 'deuterium_synthesizer', 'solar_plant',
   'fusion_reactor', 'metal_storage', 'crystal_storage', 'deuterium_tank',
-  'robotics_factory', 'shipyard', 'research_lab', 'nanite_factory', 'missile_silo',
+  'robotics_factory', 'shipyard', 'research_lab', 'nanite_factory', 
+  'missile_silo', 'underground_vault',
 ]
 
 const TECH_TYPES = [

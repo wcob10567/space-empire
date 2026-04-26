@@ -30,8 +30,12 @@ function ProtectedRoute({ children }) {
 }
 
 function Game() {
-  const { user } = useAuth()
+  // ✅ Single useAuth call with all needed values
+  const { user, profile, setProfile } = useAuth()
+
+  // ✅ activePage state declared
   const [activePage, setActivePage] = useState('overview')
+
   const [planet, setPlanet] = useState(null)
   const [resources, setResources] = useState(null)
   const [buildings, setBuildings] = useState([])
@@ -51,6 +55,9 @@ function Game() {
   useEffect(() => {
     if (!user) return
     async function loadGameData() {
+      // ✅ Update last online for bunker calculation
+      await supabase.rpc('update_last_online', { p_user_id: user.id })
+
       const { data: planetData } = await supabase
         .from('planets')
         .select('*')
@@ -139,7 +146,8 @@ function Game() {
   function renderPage() {
     switch (activePage) {
       case 'overview':
-        return <Overview planet={planet} resources={resources} buildings={buildings} />
+        // ✅ profile and setProfile passed to Overview
+        return <Overview planet={planet} resources={resources} buildings={buildings} profile={profile} setProfile={setProfile} />
       case 'buildings':
         return <Buildings planet={planet} resources={resources} buildings={buildings} setBuildings={setBuildings} setResources={setResources} />
       case 'research':
@@ -165,13 +173,13 @@ function Game() {
   }
 
   return (
-      <GameLayout
-        activePage={activePage}
-        setActivePage={setActivePage}
-        resources={resources}
-        planet={planet}
-        user={user}
-      > 
+    <GameLayout
+      activePage={activePage}
+      setActivePage={setActivePage}
+      resources={resources}
+      planet={planet}
+      user={user}
+    >
       {renderPage()}
       <DevPanel
         planet={planet}

@@ -133,10 +133,30 @@ const BUILDINGS = [
     baseProd: () => 0,
     energyUse: () => 0,
   },
+  {
+    type: 'underground_vault',
+    name: 'Underground Vault',
+    category: 'Facilities',
+    description: 'Hides a portion of your resources from raiders. Higher levels protect more.',
+    icon: '🔒',
+    baseCost: { metal: 20000, crystal: 10000, deuterium: 0 },
+    baseProd: () => 0,
+    energyUse: () => 0,
+    // Each level increases base bunker % by 1.5% up to 15% at level 10
+    vaultBonus: (lvl) => Math.min(15, Math.floor(lvl * 1.5)),
+  },
+]
+
+const BUILDING_TYPES = [
+  'metal_mine', 'crystal_mine', 'deuterium_synthesizer', 'solar_plant',
+  'fusion_reactor', 'metal_storage', 'crystal_storage', 'deuterium_tank',
+  'robotics_factory', 'shipyard', 'research_lab', 'nanite_factory',
+  'missile_silo', 'underground_vault',
 ]
 
 const CATEGORIES = ['Resources', 'Energy', 'Storage', 'Facilities']
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 function getUpgradeCost(building, currentLevel) {
   const mult = Math.pow(1.5, currentLevel)
   return {
@@ -171,6 +191,7 @@ function canAfford(cost, resources) {
   )
 }
 
+// ─── Building Card ────────────────────────────────────────────────────────────
 function BuildingCard({ building, level, resources, isUpgrading, upgradeCompleteAt, onUpgrade, anyUpgrading }) {
   const [timeLeft, setTimeLeft] = useState(0)
   const cost = getUpgradeCost(building, level)
@@ -187,10 +208,15 @@ function BuildingCard({ building, level, resources, isUpgrading, upgradeComplete
     return () => clearInterval(interval)
   }, [isUpgrading, upgradeCompleteAt])
 
+  const isVault = building.type === 'underground_vault'
+  const nextVaultBonus = isVault ? building.vaultBonus(level + 1) : null
+  const currentVaultBonus = isVault ? building.vaultBonus(level) : null
+
   return (
     <div className={`bg-gray-900 border rounded-xl p-4 transition-all ${
       isUpgrading ? 'border-cyan-600' : 'border-gray-800 hover:border-gray-700'
     }`}>
+      {/* Header */}
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-3">
           <span className="text-2xl">{building.icon}</span>
@@ -205,6 +231,7 @@ function BuildingCard({ building, level, resources, isUpgrading, upgradeComplete
         </div>
       </div>
 
+      {/* Production info */}
       {building.baseProd(level) > 0 && (
         <div className="mt-3 flex items-center gap-3 text-xs text-gray-400">
           <span>+{building.baseProd(level).toLocaleString()}/hr</span>
@@ -216,6 +243,14 @@ function BuildingCard({ building, level, resources, isUpgrading, upgradeComplete
         </div>
       )}
 
+      {/* Vault bonus info */}
+      {isVault && level > 0 && (
+        <div className="mt-3 flex items-center gap-2 text-xs text-amber-400">
+          <span>🔒 Protecting {currentVaultBonus}% of resources</span>
+        </div>
+      )}
+
+      {/* Upgrading state */}
       {isUpgrading ? (
         <div className="mt-3 bg-cyan-950/50 border border-cyan-800 rounded-lg p-2 flex items-center gap-2">
           <Clock size={14} className="text-cyan-400 animate-pulse" />
@@ -226,6 +261,7 @@ function BuildingCard({ building, level, resources, isUpgrading, upgradeComplete
         </div>
       ) : (
         <div className="mt-3">
+          {/* Cost display */}
           <div className="flex flex-wrap gap-2 text-xs mb-2">
             {cost.metal > 0 && (
               <span className={cost.metal > (resources?.metal ?? 0) ? 'text-red-400' : 'text-gray-400'}>
@@ -242,7 +278,15 @@ function BuildingCard({ building, level, resources, isUpgrading, upgradeComplete
                 🔵 {cost.deuterium.toLocaleString()}
               </span>
             )}
+            {/* Show vault bonus preview */}
+            {isVault && (
+              <span className="text-amber-500 ml-auto">
+                → {nextVaultBonus}% protection
+              </span>
+            )}
           </div>
+
+          {/* Upgrade button */}
           <button
             onClick={() => onUpgrade(building, cost)}
             disabled={!affordable || anyUpgrading}
@@ -261,18 +305,21 @@ function BuildingCard({ building, level, resources, isUpgrading, upgradeComplete
   )
 }
 
+// ─── Main Buildings Page ──────────────────────────────────────────────────────
 export default function Buildings({ planet, resources, buildings, setBuildings, setResources }) {
   const [upgrading, setUpgrading] = useState(false)
 
   const roboticsLvl = buildings?.find(b => b.building_type === 'robotics_factory')?.level ?? 0
   const anyUpgrading = buildings?.some(b => b.is_upgrading) ?? false
 
-  // On load, check if any upgrades already finished while page was closed
+  // Check for completed upgrades on load
   useEffect(() => {
     if (!planet || !buildings?.length) return
     async function checkCompleted() {
       const now = new Date()
-      const completed = buildings.filter(b => b.is_upgrading && b.upgrade_complete_at && new Date(b.upgrade_complete_at) <= now)
+      const completed = buildings.filter(
+        b => b.is_upgrading && b.upgrade_complete_at && new Date(b.upgrade_complete_at) <= now
+      )
       for (const b of completed) {
         await supabase.from('buildings').update({
           level: b.level + 1,
@@ -280,7 +327,9 @@ export default function Buildings({ planet, resources, buildings, setBuildings, 
           upgrade_complete_at: null,
         }).eq('id', b.id)
         setBuildings(prev => prev.map(pb =>
-          pb.id === b.id ? { ...pb, level: pb.level + 1, is_upgrading: false, upgrade_complete_at: null } : pb
+          pb.id === b.id
+            ? { ...pb, level: pb.level + 1, is_upgrading: false, upgrade_complete_at: null }
+            : pb
         ))
       }
     }
@@ -294,6 +343,7 @@ export default function Buildings({ planet, resources, buildings, setBuildings, 
     const buildTime = getBuildTime(cost, roboticsLvl)
     const completeAt = new Date(Date.now() + buildTime * 1000).toISOString()
 
+    // Deduct resources locally
     setResources(prev => ({
       ...prev,
       metal:     prev.metal - cost.metal,
@@ -301,23 +351,27 @@ export default function Buildings({ planet, resources, buildings, setBuildings, 
       deuterium: prev.deuterium - (cost.deuterium ?? 0),
     }))
 
+    // Update building in DB
     await supabase.from('buildings').update({
       is_upgrading: true,
       upgrade_complete_at: completeAt,
     }).eq('planet_id', planet.id).eq('building_type', building.type)
 
+    // Deduct resources in DB
     await supabase.from('resources').update({
       metal:     resources.metal - cost.metal,
       crystal:   resources.crystal - cost.crystal,
       deuterium: resources.deuterium - (cost.deuterium ?? 0),
     }).eq('planet_id', planet.id)
 
+    // Update local buildings state
     setBuildings(prev => prev.map(b =>
       b.building_type === building.type
         ? { ...b, is_upgrading: true, upgrade_complete_at: completeAt }
         : b
     ))
 
+    // Complete after timer
     setTimeout(async () => {
       const { data: updated } = await supabase
         .from('buildings')
@@ -345,6 +399,7 @@ export default function Buildings({ planet, resources, buildings, setBuildings, 
 
   return (
     <div className="space-y-8 w-full">
+      {/* Header */}
       <div className="flex items-center gap-3">
         <Building2 size={20} className="text-cyan-400" />
         <h2 className="text-xl font-bold text-white">Buildings</h2>
@@ -355,6 +410,7 @@ export default function Buildings({ planet, resources, buildings, setBuildings, 
         )}
       </div>
 
+      {/* Building categories */}
       {CATEGORIES.map(cat => (
         <div key={cat}>
           <div className="flex items-center gap-3 mb-4">

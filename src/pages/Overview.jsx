@@ -1,6 +1,20 @@
 import { useAuth } from '../context/AuthContext'
 import RenamePlanet from '../components/RenamePlanet'
 
+function calcBunkerPct(hoursOffline, vaultLevel) {
+  const basePct = 5 + Math.floor(vaultLevel * 1.0)
+  const peakPct = 25 + Math.floor(vaultLevel * 1.0)
+
+  if (hoursOffline < 0.5) return basePct
+  if (hoursOffline <= 6) {
+    return basePct + Math.floor((peakPct - basePct) * ((hoursOffline - 0.5) / 5.5))
+  }
+  if (hoursOffline <= 24) {
+    return peakPct - Math.floor((peakPct - basePct) * ((hoursOffline - 6) / 18))
+  }
+  return basePct
+}
+
 const TEMP_COLORS = {
   hot:    'text-red-400',
   warm:   'text-orange-400',
@@ -46,6 +60,63 @@ function ResourceBar({ label, current, cap, color }) {
       </div>
       {isAlmostFull && (
         <p className="text-xs text-red-400 mt-1">⚠ Storage almost full!</p>
+      )}
+    </div>
+  )
+}
+function BunkerCard({ buildings, profile }) {
+  const vaultLevel = buildings?.find(b => b.building_type === 'underground_vault')?.level ?? 0
+  const lastOnline = profile?.last_online ? new Date(profile.last_online) : new Date()
+  const hoursOffline = Math.max(0, (Date.now() - lastOnline.getTime()) / 3600000)
+  const bunkerPct = calcBunkerPct(hoursOffline, vaultLevel)
+
+  const isGrowing = hoursOffline >= 0.5 && hoursOffline <= 6
+  const isShrinking = hoursOffline > 6 && hoursOffline <= 24
+  const isAtBase = !isGrowing && !isShrinking
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">🔒</span>
+          <p className="text-sm font-semibold text-white">Underground Vault</p>
+        </div>
+        <div className="text-right">
+          <p className="text-xs text-gray-500">Protection</p>
+          <p className="text-lg font-bold text-amber-400">{bunkerPct}%</p>
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      <div className="h-2 bg-gray-800 rounded-full overflow-hidden mb-2">
+        <div
+          className={`h-full rounded-full transition-all duration-500 ${
+            isGrowing ? 'bg-green-500' :
+            isShrinking ? 'bg-yellow-500' :
+            'bg-amber-600'
+          }`}
+          style={{ width: `${(bunkerPct / 35) * 100}%` }}
+        />
+      </div>
+
+      <div className="flex items-center justify-between text-xs">
+        <span className={
+          isGrowing ? 'text-green-400' :
+          isShrinking ? 'text-yellow-400' :
+          'text-gray-500'
+        }>
+          {isGrowing ? '↑ Growing while offline' :
+           isShrinking ? '↓ Decreasing — log in more often' :
+           hoursOffline < 0.5 ? 'Just logged in' :
+           'At base level'}
+        </span>
+        <span className="text-gray-600">Vault Lv. {vaultLevel}</span>
+      </div>
+
+      {vaultLevel === 0 && (
+        <p className="text-xs text-gray-600 mt-2">
+          Build an Underground Vault to increase your base protection.
+        </p>
       )}
     </div>
   )
@@ -113,6 +184,12 @@ export default function Overview({ planet, resources, buildings, profile, setPro
           <ResourceBar label="Deuterium" current={resources?.deuterium ?? 0} cap={resources?.deuterium_cap ?? 10000} color="text-blue-300" />
         </div>
       </div>
+
+        {/* Bunker Status */}
+        <div>
+            <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">Vault Protection</h3>
+                <BunkerCard buildings={buildings} profile={profile} />
+        </div>
 
       {/* Hourly Production */}
       <div>
