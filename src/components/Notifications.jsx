@@ -99,9 +99,11 @@ export default function Notifications({ userId, onNavigate }) {
     setUnread(prev => Math.max(0, prev - 1))
   }
 
-  function dismissAll() {
+function dismissAll() {
     setNotifications([])
     setUnread(0)
+    prevReportCount.current = 0
+    prevEspCount.current = 0
   }
 
   function handleClick(notif) {

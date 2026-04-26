@@ -429,12 +429,12 @@ export default function Reports() {
         setLoading(true)
         const [{ data: combat }, { data: espionage }] = await Promise.all([
         supabase.from('combat_reports')
-            .select('*, planets(name, galaxy, system, position)')
+            .select('*, planets!planet_id(name, galaxy, system, position)')
             .or(`attacker_id.eq.${user.id},defender_id.eq.${user.id}`)
             .order('created_at', { ascending: false })
             .limit(50),
         supabase.from('espionage_reports')
-            .select('*, planets(name, galaxy, system, position)')
+            .select('*, planets!target_planet_id(name, galaxy, system, position)')
             .eq('spy_owner_id', user.id)
             .order('created_at', { ascending: false })
             .limit(50),
