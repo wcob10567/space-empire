@@ -206,6 +206,7 @@ function CombatReportCard({ report, currentUserId, onDelete }) {
 // ─── Espionage Report Card ────────────────────────────────────────────────────
 function EspionageReportCard({ report, onDelete }) {
   const [expanded, setExpanded] = useState(false)
+  console.log('Report data:', report)
   const res = report.resources_seen ?? {}
   const ships = report.ships_seen
   const defenses = report.defenses_seen
@@ -429,12 +430,12 @@ export default function Reports() {
         setLoading(true)
         const [{ data: combat }, { data: espionage }] = await Promise.all([
         supabase.from('combat_reports')
-            .select('*, planets!planet_id(name, galaxy, system, position)')
+            .select('*, planets!combat_reports_planet_id_fkey(name, galaxy, system, position)')
             .or(`attacker_id.eq.${user.id},defender_id.eq.${user.id}`)
             .order('created_at', { ascending: false })
             .limit(50),
         supabase.from('espionage_reports')
-            .select('*, planets!target_planet_id(name, galaxy, system, position)')
+            .select('*, planets!espionage_reports_target_planet_id_fkey(name, galaxy, system, position)')
             .eq('spy_owner_id', user.id)
             .order('created_at', { ascending: false })
             .limit(50),
