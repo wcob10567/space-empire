@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
-import { Building2, Clock, ChevronUp, Zap, X, ListOrdered } from 'lucide-react'
+import { Building2, Clock, ChevronUp, Zap, X, ListOrdered, Lock, Coins } from 'lucide-react'
 import { BUILDINGS, BUILDING_CATEGORIES as CATEGORIES, BUILDING_BY_TYPE } from '../data/buildings'
 import { TICK } from '../config/tick'
 import { addToBuildingQueue, cancelBuildingQueue } from '../services/buildQueue'
+import { BUILDING_SLOT_TIERS, countEarnedFreeSlots } from '../data/queueSlots'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function getUpgradeCost(building, currentLevel) {
@@ -40,10 +41,9 @@ function canAfford(cost, available) {
   )
 }
 
-// Slot count = 1 + Robotics 4 + Robotics 8 (paid slots come later via Rush Tokens).
-function maxBuildingSlots(roboticsLvl) {
-  return 1 + (roboticsLvl >= 4 ? 1 : 0) + (roboticsLvl >= 8 ? 1 : 0)
-}
+// Slot count is computed from BUILDING_SLOT_TIERS in src/data/queueSlots.js.
+// The single source of truth lives there so the SlotProgress panel below and
+// the slotsFull gate stay in lockstep.
 
 // ─── Building Card ────────────────────────────────────────────────────────────
 function BuildingCard({
@@ -173,6 +173,53 @@ function BuildingCard({
   )
 }
 
+// ─── Slot progression panel ─────────────────────────────────────────────────
+// Always visible so the player can see how the slot system works. Earned tiers
+// are checked off; un-earned tiers show what they need; paid tiers show a
+// disabled "Buy with Rush Tokens" button until that economy lands.
+function SlotProgress({ tiers, levels, slotsUsed }) {
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+      <div className="flex items-center gap-2 mb-2">
+        <Building2 size={14} className="text-cyan-400" />
+        <span className="text-xs font-semibold text-cyan-400 uppercase tracking-wide">Build queue slots</span>
+        <span className="text-xs text-gray-500 ml-auto">{slotsUsed} in use</span>
+      </div>
+      <div className="space-y-1">
+        {tiers.map(t => {
+          const earned = !t.paid && t.check?.(levels)
+          return (
+            <div key={t.slot} className={`flex items-center gap-2 text-xs px-2 py-1 rounded ${
+              earned ? 'text-gray-300' :
+              t.paid ? 'text-gray-500'  :
+                       'text-gray-500'
+            }`}>
+              <span className="font-mono w-5 text-right">#{t.slot}</span>
+              {earned ? (
+                <span className="text-green-400">✓</span>
+              ) : t.paid ? (
+                <Coins size={12} className="text-yellow-500" />
+              ) : (
+                <Lock size={12} className="text-gray-600" />
+              )}
+              <span className="flex-1 truncate">{t.requirement}</span>
+              {t.paid && (
+                <button
+                  disabled
+                  title="Rush Tokens economy isn't built yet"
+                  className="px-2 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-500 text-xs cursor-not-allowed"
+                >
+                  Buy (soon)
+                </button>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ─── Queue list ──────────────────────────────────────────────────────────────
 function BuildingQueueList({ queue, onCancel, submitting }) {
   if (!queue?.length) return null
@@ -223,7 +270,7 @@ export default function Buildings({
   const roboticsLvl = buildings?.find(b => b.building_type === 'robotics_factory')?.level ?? 0
   const anyUpgrading = buildings?.some(b => b.is_upgrading) ?? false
 
-  const maxSlots = maxBuildingSlots(roboticsLvl)
+  const maxSlots = countEarnedFreeSlots(BUILDING_SLOT_TIERS, { robotics: roboticsLvl })
   const queueLen = buildingQueue?.length ?? 0
   const slotsUsed = (anyUpgrading ? 1 : 0) + queueLen
   const slotsFull = slotsUsed >= maxSlots
@@ -347,6 +394,13 @@ export default function Buildings({
 
       {/* Queue list (only the *waiting* items — the active upgrade shows on its own card) */}
       <BuildingQueueList queue={buildingQueue} onCancel={handleCancel} submitting={submitting} />
+
+      {/* Slot progression — always visible so the player learns the system */}
+      <SlotProgress
+        tiers={BUILDING_SLOT_TIERS}
+        levels={{ robotics: roboticsLvl }}
+        slotsUsed={slotsUsed}
+      />
 
       {/* Building categories */}
       {CATEGORIES.map(cat => (
