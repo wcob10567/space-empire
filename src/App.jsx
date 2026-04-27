@@ -220,7 +220,7 @@ function Game() {
       case 'overview':
         return <Overview planet={planet} resources={resources} buildings={buildings} profile={profile} setProfile={setProfile} />
       case 'buildings':
-        return <Buildings planet={planet} resources={resources} buildings={buildings} setBuildings={setBuildings} setResources={setResources} buildingQueue={buildingQueue} setBuildingQueue={setBuildingQueue} reservation={reservation} />
+        return <Buildings planet={planet} resources={resources} buildings={buildings} setBuildings={setBuildings} buildingQueue={buildingQueue} setBuildingQueue={setBuildingQueue} reservation={reservation} />
       case 'research':
         return <Research planet={planet} planets={planets} resources={resources} buildings={buildings} research={research} setResearch={setResearch} setResources={setResources} />
       case 'shipyard':
