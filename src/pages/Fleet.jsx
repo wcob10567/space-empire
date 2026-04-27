@@ -2,20 +2,8 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { Send, Clock, X, Rocket, Package, Search, Target, Globe, Recycle, Home } from 'lucide-react'
-
-// ─── Ship definitions ─────────────────────────────────────────────────────────
-const SHIP_STATS = {
-  light_fighter:   { name: 'Light Fighter',   icon: '✈️',  speed: 12500,     cargo: 50      },
-  heavy_fighter:   { name: 'Heavy Fighter',   icon: '🛩️', speed: 10000,     cargo: 100     },
-  cruiser:         { name: 'Cruiser',         icon: '🚀',  speed: 15000,     cargo: 800     },
-  battleship:      { name: 'Battleship',      icon: '⚓',  speed: 10000,     cargo: 1500    },
-  bomber:          { name: 'Bomber',          icon: '💣',  speed: 4000,      cargo: 500     },
-  destroyer:       { name: 'Destroyer',       icon: '🛸',  speed: 5000,      cargo: 2000    },
-  deathstar:       { name: 'Deathstar',       icon: '🌑',  speed: 100,       cargo: 1000000 },
-  colony_ship:     { name: 'Colony Ship',     icon: '🏗️', speed: 2500,      cargo: 7500    },
-  recycler:        { name: 'Recycler',        icon: '♻️',  speed: 2000,      cargo: 20000   },
-  espionage_probe: { name: 'Espionage Probe', icon: '🔍',  speed: 100000000, cargo: 5       },
-}
+import { SHIP_STATS } from '../data/ships'
+import { TICK } from '../config/tick'
 
 // Which ships are allowed per mission (null = all ships)
 const MISSION_SHIPS = {
@@ -435,7 +423,7 @@ useEffect(() => {
           return data
         })
       }
-    }, 3000)
+    }, TICK.FLEET_LIST_MS)
     return () => clearInterval(interval)
   }, [user?.id])
 

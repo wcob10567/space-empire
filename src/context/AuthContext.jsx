@@ -1,5 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { STARTING_BUILDING_TYPES } from '../data/buildings'
+import { DEFAULT_RESOURCES } from '../data/defaults'
 
 const AuthContext = createContext({})
 
@@ -66,24 +68,12 @@ export function AuthProvider({ children }) {
     .single()
     if (planetError) throw planetError
 
-    // Create starting resources for homeworld
-    await supabase.from('resources').insert({
-      planet_id: planet.id,
-      metal: 500,
-      crystal: 300,
-      deuterium: 100,
-    })
-
-    // Create starting buildings (all at level 0)
-    const buildingTypes = [
-      'metal_mine', 'crystal_mine', 'deuterium_synthesizer',
-      'solar_plant', 'fusion_reactor',
-      'metal_storage', 'crystal_storage', 'deuterium_tank',
-      'robotics_factory', 'shipyard', 'research_lab',
-      'nanite_factory', 'missile_silo',
-    ]
+    // Create starting resources + default building rows (level 0).
+    // STARTING_BUILDING_TYPES excludes underground_vault — players upgrade it
+    // from level 0 and the row is created lazily.
+    await supabase.from('resources').insert({ planet_id: planet.id, ...DEFAULT_RESOURCES })
     await supabase.from('buildings').insert(
-      buildingTypes.map(type => ({ planet_id: planet.id, building_type: type }))
+      STARTING_BUILDING_TYPES.map(type => ({ planet_id: planet.id, building_type: type }))
     )
 
     return data

@@ -12,10 +12,8 @@ import Galaxy from './pages/Galaxy'
 import Fleet from './pages/Fleet'
 import DevPanel from './components/DevPanel'
 import Reports from './pages/Reports'
+import { TICK } from './config/tick'
 
-const TICK_INTERVAL = 5000
-const FLEET_TICK = 3000
-const NPC_TICK = 300000
 const ACTIVE_PLANET_KEY = 'space-empire-active-planet'
 
 function ProtectedRoute({ children }) {
@@ -118,7 +116,7 @@ function Game() {
     const interval = setInterval(() => {
       setResources(prev => {
         if (!prev) return prev
-        const tickAmount = TICK_INTERVAL / 1000 / 3600
+        const tickAmount = TICK.RESOURCES_MS / 1000 / 3600
         return {
           ...prev,
           metal:     Math.min(prev.metal + prod.metal * tickAmount, prev.metal_cap),
@@ -127,7 +125,7 @@ function Game() {
           energy:    prod.energy,
         }
       })
-    }, TICK_INTERVAL)
+    }, TICK.RESOURCES_MS)
     return () => clearInterval(interval)
   }, [resources, buildings, getProduction])
 
@@ -166,8 +164,8 @@ function Game() {
     }
     tick()
     restockNpcs()
-    const fleetInterval = setInterval(tick, FLEET_TICK)
-    const npcInterval = setInterval(restockNpcs, NPC_TICK)
+    const fleetInterval = setInterval(tick, TICK.FLEET_PROCESS_MS)
+    const npcInterval = setInterval(restockNpcs, TICK.NPC_RESTOCK_MS)
     return () => {
       clearInterval(fleetInterval)
       clearInterval(npcInterval)

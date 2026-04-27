@@ -1,162 +1,9 @@
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { FlaskConical, Clock, ChevronUp, Lock, AlertTriangle, X } from 'lucide-react'
+import { TECH_TREE, TECH_BRANCHES as BRANCHES } from '../data/techTree'
+import { TICK } from '../config/tick'
 
-// ─── Tech Tree Definition ───────────────────────────────────────────────────
-const TECH_TREE = {
-  Combat: [
-    {
-      type: 'energy_tech',
-      name: 'Energy Technology',
-      icon: '⚡',
-      description: 'Improves energy efficiency across all systems.',
-      baseCost: { metal: 0, crystal: 800, deuterium: 400 },
-      requires: { lab: 1 },
-      prereqs: [],
-    },
-    {
-      type: 'laser_tech',
-      name: 'Laser Technology',
-      icon: '🔴',
-      description: 'Develops focused laser weapons for combat.',
-      baseCost: { metal: 200, crystal: 100, deuterium: 0 },
-      requires: { lab: 1, energy_tech: 2 },
-      prereqs: ['energy_tech'],
-    },
-    {
-      type: 'ion_tech',
-      name: 'Ion Technology',
-      icon: '🌀',
-      description: 'Harnesses ion particles for powerful weapons.',
-      baseCost: { metal: 1000, crystal: 300, deuterium: 100 },
-      requires: { lab: 4, energy_tech: 4, laser_tech: 5 },
-      prereqs: ['laser_tech'],
-    },
-    {
-      type: 'weapons_tech',
-      name: 'Weapons Technology',
-      icon: '⚔️',
-      description: 'Increases the attack power of all ships.',
-      baseCost: { metal: 800, crystal: 200, deuterium: 0 },
-      requires: { lab: 4 },
-      prereqs: [],
-    },
-    {
-      type: 'shielding_tech',
-      name: 'Shielding Technology',
-      icon: '🛡️',
-      description: 'Strengthens defensive shields on all ships.',
-      baseCost: { metal: 200, crystal: 600, deuterium: 0 },
-      requires: { lab: 6, energy_tech: 3 },
-      prereqs: ['energy_tech'],
-    },
-    {
-      type: 'armor_tech',
-      name: 'Armor Technology',
-      icon: '🔩',
-      description: 'Reinforces hull integrity of all ships.',
-      baseCost: { metal: 1000, crystal: 0, deuterium: 0 },
-      requires: { lab: 2 },
-      prereqs: [],
-    },
-  ],
-  Propulsion: [
-    {
-      type: 'combustion_drive',
-      name: 'Combustion Drive',
-      icon: '🔥',
-      description: 'Basic propulsion for small ships.',
-      baseCost: { metal: 400, crystal: 0, deuterium: 600 },
-      requires: { lab: 1, energy_tech: 1 },
-      prereqs: ['energy_tech'],
-    },
-    {
-      type: 'impulse_drive',
-      name: 'Impulse Drive',
-      icon: '💫',
-      description: 'Advanced drive enabling faster fleet speeds.',
-      baseCost: { metal: 2000, crystal: 4000, deuterium: 600 },
-      requires: { lab: 2, energy_tech: 1 },
-      prereqs: ['combustion_drive'],
-    },
-    {
-      type: 'hyperspace_drive',
-      name: 'Hyperspace Drive',
-      icon: '🌌',
-      description: 'Allows ships to travel at extreme speeds.',
-      baseCost: { metal: 10000, crystal: 20000, deuterium: 6000 },
-      requires: { lab: 7, hyperspace_tech: 3, impulse_drive: 3 },
-      prereqs: ['impulse_drive', 'hyperspace_tech'],
-    },
-    {
-      type: 'hyperspace_tech',
-      name: 'Hyperspace Technology',
-      icon: '🔮',
-      description: 'Unlocks hyperspace research branch.',
-      baseCost: { metal: 0, crystal: 4000, deuterium: 2000 },
-      requires: { lab: 7, energy_tech: 5, shielding_tech: 5 },
-      prereqs: ['shielding_tech'],
-    },
-    {
-      type: 'graviton_tech',
-      name: 'Graviton Technology',
-      icon: '🌑',
-      description: 'Manipulates gravitational fields for advanced weapons.',
-      baseCost: { metal: 0, crystal: 0, deuterium: 300000 },
-      requires: { lab: 12 },
-      prereqs: ['hyperspace_drive'],
-    },
-  ],
-  Economy: [
-    {
-      type: 'espionage_tech',
-      name: 'Espionage Technology',
-      icon: '🕵️',
-      description: 'Improves spy probe effectiveness.',
-      baseCost: { metal: 200, crystal: 1000, deuterium: 200 },
-      requires: { lab: 3 },
-      prereqs: [],
-    },
-    {
-      type: 'computer_tech',
-      name: 'Computer Technology',
-      icon: '💻',
-      description: 'Increases the number of fleet slots available.',
-      baseCost: { metal: 0, crystal: 400, deuterium: 600 },
-      requires: { lab: 1 },
-      prereqs: [],
-    },
-    {
-      type: 'astrophysics',
-      name: 'Astrophysics',
-      icon: '🔭',
-      description: 'Enables colonization of new planets.',
-      baseCost: { metal: 4000, crystal: 8000, deuterium: 4000 },
-      requires: { lab: 3, espionage_tech: 4, impulse_drive: 3 },
-      prereqs: ['espionage_tech', 'impulse_drive'],
-    },
-    {
-      type: 'intergalactic_research',
-      name: 'Intergalactic Research',
-      icon: '🌐',
-      description: 'Combines research labs across planets.',
-      baseCost: { metal: 240000, crystal: 400000, deuterium: 160000 },
-      requires: { lab: 10, computer_tech: 8, hyperspace_tech: 8 },
-      prereqs: ['computer_tech', 'hyperspace_tech'],
-    },
-    {
-      type: 'plasma_tech',
-      name: 'Plasma Technology',
-      icon: '🟣',
-      description: 'Greatly increases resource production.',
-      baseCost: { metal: 2000, crystal: 4000, deuterium: 1000 },
-      requires: { lab: 4, energy_tech: 8, laser_tech: 10, ion_tech: 5 },
-      prereqs: ['ion_tech'],
-    },
-  ],
-}
-
-const BRANCHES = ['Combat', 'Propulsion', 'Economy']
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 function getResearchCost(tech, currentLevel) {
@@ -502,7 +349,7 @@ export default function Research({ planet, planets, resources, buildings, resear
       }
     }
     checkCompleted()
-    const interval = setInterval(checkCompleted, 2000)
+    const interval = setInterval(checkCompleted, TICK.COMPLETION_POLL_MS)
     return () => { cancelled = true; clearInterval(interval) }
   }, [research, setResearch])
 
@@ -528,7 +375,7 @@ export default function Research({ planet, planets, resources, buildings, resear
       setPlanetData(byPlanet)
     }
     loadAll()
-    const interval = setInterval(loadAll, 5000)
+    const interval = setInterval(loadAll, TICK.RESEARCH_PLANET_DATA_MS)
     return () => { cancelled = true; clearInterval(interval) }
   }, [multiPlanet, planets])
 

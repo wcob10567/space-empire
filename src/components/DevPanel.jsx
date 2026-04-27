@@ -1,24 +1,10 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { Terminal, ChevronDown, ChevronUp, Zap, Coins, Building2, FlaskConical, Rocket, RotateCcw } from 'lucide-react'
-
-const BUILDING_TYPES = [
-  'metal_mine', 'crystal_mine', 'deuterium_synthesizer', 'solar_plant',
-  'fusion_reactor', 'metal_storage', 'crystal_storage', 'deuterium_tank',
-  'robotics_factory', 'shipyard', 'research_lab', 'nanite_factory', 
-  'missile_silo', 'underground_vault',
-]
-
-const TECH_TYPES = [
-  'energy_tech', 'laser_tech', 'ion_tech', 'weapons_tech', 'shielding_tech', 'armor_tech',
-  'combustion_drive', 'impulse_drive', 'hyperspace_drive', 'hyperspace_tech', 'graviton_tech',
-  'espionage_tech', 'computer_tech', 'astrophysics', 'intergalactic_research', 'plasma_tech',
-]
-
-const SHIP_TYPES = [
-  'light_fighter', 'heavy_fighter', 'cruiser', 'battleship', 'bomber',
-  'destroyer', 'deathstar', 'colony_ship', 'recycler', 'espionage_probe',
-]
+import { ALL_BUILDING_TYPES as BUILDING_TYPES } from '../data/buildings'
+import { TECH_TYPES } from '../data/techTree'
+import { SHIP_TYPES } from '../data/ships'
+import { TICK } from '../config/tick'
 
 const SPEED_OPTIONS = [
   { label: '1x (normal)', value: 1 },
@@ -137,7 +123,7 @@ export default function DevPanel({ planet, resources, buildings, research, ships
 
     // Reload to clear stale in-page setTimeouts so DB-driven completion takes over.
     // Shipyard ship builds use only local state, so any in-progress build will be lost — dev tool limitation.
-    setTimeout(() => window.location.reload(), 200)
+    setTimeout(() => window.location.reload(), TICK.DEV_RELOAD_DELAY_MS)
   }
 
   async function addResources() {
