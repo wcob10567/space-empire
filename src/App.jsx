@@ -122,12 +122,37 @@ function Game() {
     return () => clearInterval(interval)
   }, [resources, buildings, getProduction])
 
-  // Fleet tick: process arrivals, refresh planet list (catches new colonies),
-  // refresh ships for the active planet
+  // Fleet tick: process arrivals, advance building queues, refresh planet list
+  // (catches new colonies), refresh ships for the active planet
   useEffect(() => {
     if (!user) return
     async function tick() {
-      await supabase.rpc('process_arrived_fleets')
+      // Server-side processors. Fleets first (plunder/transport may free up
+      // resources that the queue then deducts on the same tick).
+      const [, { data: queueStarted }] = await Promise.all([
+        supabase.rpc('process_arrived_fleets'),
+        supabase.rpc('process_building_queue'),
+      ])
+
+      // For each queue start on the active planet, apply the same deduction +
+      // mark is_upgrading locally so the UI stays in sync without a full refetch
+      // (refetching resources would clobber the local production tick).
+      if (Array.isArray(queueStarted) && queueStarted.length > 0 && planet?.id) {
+        for (const ev of queueStarted) {
+          if (ev.planet_id !== planet.id) continue
+          setResources(prev => prev ? ({
+            ...prev,
+            metal:     prev.metal     - (ev.metal     ?? 0),
+            crystal:   prev.crystal   - (ev.crystal   ?? 0),
+            deuterium: prev.deuterium - (ev.deuterium ?? 0),
+          }) : prev)
+          setBuildings(prev => prev.map(b =>
+            b.building_type === ev.building_type
+              ? { ...b, is_upgrading: true, upgrade_complete_at: ev.complete_at }
+              : b
+          ))
+        }
+      }
 
       const { data: planetData } = await queries.planetsForUser(user.id)
       if (planetData) {
