@@ -26,4 +26,9 @@ export const queries = {
   // Bulk multi-planet (e.g. research planet picker)
   buildingsForPlanets: (planetIds) => supabase.from('buildings').select('*').in('planet_id', planetIds),
   resourcesForPlanets: (planetIds) => supabase.from('resources').select('*').in('planet_id', planetIds),
+
+  // Build queue (per planet, ordered)
+  buildingQueue: (planetId) => supabase.from('building_queue').select('*')
+    .eq('planet_id', planetId)
+    .order('position', { ascending: true }),
 }

@@ -18,7 +18,7 @@ const NAV_ITEMS = [
 
 export default function GameLayout({
   activePage, setActivePage,
-  resources, planet, planets, onSelectPlanet,
+  resources, reservation, planet, planets, onSelectPlanet,
   user, children,
 }) {
   const { profile, signOut } = useAuth()
@@ -43,9 +43,9 @@ export default function GameLayout({
 
         {/* Resource Bar */}
         <div className="hidden sm:flex items-center gap-4 text-xs">
-          <ResourcePill label="Metal"     value={resources?.metal}     color="text-gray-300" bg="bg-gray-800" />
-          <ResourcePill label="Crystal"   value={resources?.crystal}   color="text-cyan-300" bg="bg-cyan-950" />
-          <ResourcePill label="Deuterium" value={resources?.deuterium} color="text-blue-300" bg="bg-blue-950" />
+          <ResourcePill label="Metal"     value={resources?.metal}     reserved={reservation?.metal}     color="text-gray-300" bg="bg-gray-800" />
+          <ResourcePill label="Crystal"   value={resources?.crystal}   reserved={reservation?.crystal}   color="text-cyan-300" bg="bg-cyan-950" />
+          <ResourcePill label="Deuterium" value={resources?.deuterium} reserved={reservation?.deuterium} color="text-blue-300" bg="bg-blue-950" />
           <div className={`flex items-center gap-1 px-2 py-1 rounded bg-gray-800 ${energyColor}`}>
             <Zap size={12} />
             <span>{Math.floor(energy)}</span>
@@ -135,9 +135,9 @@ export default function GameLayout({
         {/* Main content */}
         <main className="flex-1 overflow-y-auto p-4">
           <div className="flex sm:hidden items-center gap-2 text-xs mb-4 flex-wrap">
-            <ResourcePill label="Metal"     value={resources?.metal}     color="text-gray-300" bg="bg-gray-800" />
-            <ResourcePill label="Crystal"   value={resources?.crystal}   color="text-cyan-300" bg="bg-cyan-950" />
-            <ResourcePill label="Deuterium" value={resources?.deuterium} color="text-blue-300" bg="bg-blue-950" />
+            <ResourcePill label="Metal"     value={resources?.metal}     reserved={reservation?.metal}     color="text-gray-300" bg="bg-gray-800" />
+            <ResourcePill label="Crystal"   value={resources?.crystal}   reserved={reservation?.crystal}   color="text-cyan-300" bg="bg-cyan-950" />
+            <ResourcePill label="Deuterium" value={resources?.deuterium} reserved={reservation?.deuterium} color="text-blue-300" bg="bg-blue-950" />
             <div className={`flex items-center gap-1 px-2 py-1 rounded bg-gray-800 ${energyColor}`}>
               <Zap size={12} />
               <span>{Math.floor(energy)}</span>
@@ -150,13 +150,20 @@ export default function GameLayout({
   )
 }
 
-function ResourcePill({ label, value, color, bg }) {
+function ResourcePill({ label, value, reserved, color, bg }) {
+  const r = Math.floor(reserved ?? 0)
   return (
-    <div className={`flex items-center gap-1.5 px-2 py-1 rounded ${bg}`}>
+    <div
+      className={`flex items-center gap-1.5 px-2 py-1 rounded ${bg}`}
+      title={r > 0 ? `${r.toLocaleString()} reserved by build queues` : undefined}
+    >
       <span className="text-gray-500">{label}:</span>
       <span className={`font-mono font-medium ${color}`}>
         {value !== undefined ? Math.floor(value).toLocaleString() : '...'}
       </span>
+      {r > 0 && (
+        <span className="text-yellow-500 font-mono text-xs">−{r.toLocaleString()}</span>
+      )}
     </div>
   )
 }
