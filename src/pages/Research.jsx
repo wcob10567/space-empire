@@ -1,162 +1,11 @@
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { FlaskConical, Clock, ChevronUp, Lock, AlertTriangle, X } from 'lucide-react'
+import { TECH_TREE, TECH_BRANCHES as BRANCHES } from '../data/techTree'
+import { TICK } from '../config/tick'
+import { queries } from '../services/queries'
+import { debitResources } from '../services/resources'
 
-// ─── Tech Tree Definition ───────────────────────────────────────────────────
-const TECH_TREE = {
-  Combat: [
-    {
-      type: 'energy_tech',
-      name: 'Energy Technology',
-      icon: '⚡',
-      description: 'Improves energy efficiency across all systems.',
-      baseCost: { metal: 0, crystal: 800, deuterium: 400 },
-      requires: { lab: 1 },
-      prereqs: [],
-    },
-    {
-      type: 'laser_tech',
-      name: 'Laser Technology',
-      icon: '🔴',
-      description: 'Develops focused laser weapons for combat.',
-      baseCost: { metal: 200, crystal: 100, deuterium: 0 },
-      requires: { lab: 1, energy_tech: 2 },
-      prereqs: ['energy_tech'],
-    },
-    {
-      type: 'ion_tech',
-      name: 'Ion Technology',
-      icon: '🌀',
-      description: 'Harnesses ion particles for powerful weapons.',
-      baseCost: { metal: 1000, crystal: 300, deuterium: 100 },
-      requires: { lab: 4, energy_tech: 4, laser_tech: 5 },
-      prereqs: ['laser_tech'],
-    },
-    {
-      type: 'weapons_tech',
-      name: 'Weapons Technology',
-      icon: '⚔️',
-      description: 'Increases the attack power of all ships.',
-      baseCost: { metal: 800, crystal: 200, deuterium: 0 },
-      requires: { lab: 4 },
-      prereqs: [],
-    },
-    {
-      type: 'shielding_tech',
-      name: 'Shielding Technology',
-      icon: '🛡️',
-      description: 'Strengthens defensive shields on all ships.',
-      baseCost: { metal: 200, crystal: 600, deuterium: 0 },
-      requires: { lab: 6, energy_tech: 3 },
-      prereqs: ['energy_tech'],
-    },
-    {
-      type: 'armor_tech',
-      name: 'Armor Technology',
-      icon: '🔩',
-      description: 'Reinforces hull integrity of all ships.',
-      baseCost: { metal: 1000, crystal: 0, deuterium: 0 },
-      requires: { lab: 2 },
-      prereqs: [],
-    },
-  ],
-  Propulsion: [
-    {
-      type: 'combustion_drive',
-      name: 'Combustion Drive',
-      icon: '🔥',
-      description: 'Basic propulsion for small ships.',
-      baseCost: { metal: 400, crystal: 0, deuterium: 600 },
-      requires: { lab: 1, energy_tech: 1 },
-      prereqs: ['energy_tech'],
-    },
-    {
-      type: 'impulse_drive',
-      name: 'Impulse Drive',
-      icon: '💫',
-      description: 'Advanced drive enabling faster fleet speeds.',
-      baseCost: { metal: 2000, crystal: 4000, deuterium: 600 },
-      requires: { lab: 2, energy_tech: 1 },
-      prereqs: ['combustion_drive'],
-    },
-    {
-      type: 'hyperspace_drive',
-      name: 'Hyperspace Drive',
-      icon: '🌌',
-      description: 'Allows ships to travel at extreme speeds.',
-      baseCost: { metal: 10000, crystal: 20000, deuterium: 6000 },
-      requires: { lab: 7, hyperspace_tech: 3, impulse_drive: 3 },
-      prereqs: ['impulse_drive', 'hyperspace_tech'],
-    },
-    {
-      type: 'hyperspace_tech',
-      name: 'Hyperspace Technology',
-      icon: '🔮',
-      description: 'Unlocks hyperspace research branch.',
-      baseCost: { metal: 0, crystal: 4000, deuterium: 2000 },
-      requires: { lab: 7, energy_tech: 5, shielding_tech: 5 },
-      prereqs: ['shielding_tech'],
-    },
-    {
-      type: 'graviton_tech',
-      name: 'Graviton Technology',
-      icon: '🌑',
-      description: 'Manipulates gravitational fields for advanced weapons.',
-      baseCost: { metal: 0, crystal: 0, deuterium: 300000 },
-      requires: { lab: 12 },
-      prereqs: ['hyperspace_drive'],
-    },
-  ],
-  Economy: [
-    {
-      type: 'espionage_tech',
-      name: 'Espionage Technology',
-      icon: '🕵️',
-      description: 'Improves spy probe effectiveness.',
-      baseCost: { metal: 200, crystal: 1000, deuterium: 200 },
-      requires: { lab: 3 },
-      prereqs: [],
-    },
-    {
-      type: 'computer_tech',
-      name: 'Computer Technology',
-      icon: '💻',
-      description: 'Increases the number of fleet slots available.',
-      baseCost: { metal: 0, crystal: 400, deuterium: 600 },
-      requires: { lab: 1 },
-      prereqs: [],
-    },
-    {
-      type: 'astrophysics',
-      name: 'Astrophysics',
-      icon: '🔭',
-      description: 'Enables colonization of new planets.',
-      baseCost: { metal: 4000, crystal: 8000, deuterium: 4000 },
-      requires: { lab: 3, espionage_tech: 4, impulse_drive: 3 },
-      prereqs: ['espionage_tech', 'impulse_drive'],
-    },
-    {
-      type: 'intergalactic_research',
-      name: 'Intergalactic Research',
-      icon: '🌐',
-      description: 'Combines research labs across planets.',
-      baseCost: { metal: 240000, crystal: 400000, deuterium: 160000 },
-      requires: { lab: 10, computer_tech: 8, hyperspace_tech: 8 },
-      prereqs: ['computer_tech', 'hyperspace_tech'],
-    },
-    {
-      type: 'plasma_tech',
-      name: 'Plasma Technology',
-      icon: '🟣',
-      description: 'Greatly increases resource production.',
-      baseCost: { metal: 2000, crystal: 4000, deuterium: 1000 },
-      requires: { lab: 4, energy_tech: 8, laser_tech: 10, ion_tech: 5 },
-      prereqs: ['ion_tech'],
-    },
-  ],
-}
-
-const BRANCHES = ['Combat', 'Propulsion', 'Economy']
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 function getResearchCost(tech, currentLevel) {
@@ -489,20 +338,27 @@ export default function Research({ planet, planets, resources, buildings, resear
       )
       for (const r of expired) {
         if (cancelled) return
-        await supabase.from('research').update({
+        const { error } = await supabase.from('research').update({
           level: r.level + 1,
           is_researching: false,
           research_complete_at: null,
-        }).eq('id', r.id)
+        })
+          .eq('id', r.id)
+          .eq('is_researching', true)  // guard against double-fire from a stale setTimeout
+        if (error) continue
         setResearch(prev => prev.map(pr =>
-          pr.tech_type === r.tech_type
+          pr.tech_type === r.tech_type && pr.is_researching
             ? { ...pr, level: pr.level + 1, is_researching: false, research_complete_at: null }
             : pr
         ))
       }
+      // Release the local dispatch lock once anything finishes — otherwise a
+      // speed-shrink that completes via this interval would leave the page-local
+      // `researching` flag stuck until the original setTimeout fires.
+      if (expired.length > 0) setResearching(false)
     }
     checkCompleted()
-    const interval = setInterval(checkCompleted, 2000)
+    const interval = setInterval(checkCompleted, TICK.COMPLETION_POLL_MS)
     return () => { cancelled = true; clearInterval(interval) }
   }, [research, setResearch])
 
@@ -514,8 +370,8 @@ export default function Research({ planet, planets, resources, buildings, resear
     async function loadAll() {
       const ids = planets.map(p => p.id)
       const [{ data: bld }, { data: res }] = await Promise.all([
-        supabase.from('buildings').select('*').in('planet_id', ids),
-        supabase.from('resources').select('*').in('planet_id', ids),
+        queries.buildingsForPlanets(ids),
+        queries.resourcesForPlanets(ids),
       ])
       if (cancelled) return
       const byPlanet = {}
@@ -528,7 +384,7 @@ export default function Research({ planet, planets, resources, buildings, resear
       setPlanetData(byPlanet)
     }
     loadAll()
-    const interval = setInterval(loadAll, 5000)
+    const interval = setInterval(loadAll, TICK.RESEARCH_PLANET_DATA_MS)
     return () => { cancelled = true; clearInterval(interval) }
   }, [multiPlanet, planets])
 
@@ -575,61 +431,96 @@ export default function Research({ planet, planets, resources, buildings, resear
     const completeAt = new Date(Date.now() + researchTime * 1000).toISOString()
     const isActivePlanet = targetPlanet.id === planet?.id
 
-    if (isActivePlanet) {
-      setResources(prev => prev ? ({
-        ...prev,
-        metal:     prev.metal - cost.metal,
-        crystal:   prev.crystal - cost.crystal,
-        deuterium: prev.deuterium - (cost.deuterium ?? 0),
-      }) : prev)
-    }
-
-    const existing = research?.find(r => r.tech_type === tech.type)
-    if (existing) {
-      await supabase.from('research').update({
-        is_researching: true,
-        research_complete_at: completeAt,
-      }).eq('id', existing.id)
-    } else {
-      await supabase.from('research').insert({
-        owner_id: targetPlanet.owner_id,
-        tech_type: tech.type,
-        level: 0,
-        is_researching: true,
-        research_complete_at: completeAt,
-      })
-    }
-
-    await supabase.from('resources').update({
-      metal:     targetResources.metal - cost.metal,
-      crystal:   targetResources.crystal - cost.crystal,
-      deuterium: targetResources.deuterium - (cost.deuterium ?? 0),
-    }).eq('planet_id', targetPlanet.id)
-
-    setResearch(prev => {
-      const exists = prev?.find(r => r.tech_type === tech.type)
-      if (exists) {
-        return prev.map(r => r.tech_type === tech.type
-          ? { ...r, is_researching: true, research_complete_at: completeAt }
-          : r
-        )
+    try {
+      if (isActivePlanet) {
+        setResources(prev => prev ? ({
+          ...prev,
+          metal:     prev.metal - cost.metal,
+          crystal:   prev.crystal - cost.crystal,
+          deuterium: prev.deuterium - (cost.deuterium ?? 0),
+        }) : prev)
       }
-      return [...(prev ?? []), { tech_type: tech.type, level: 0, is_researching: true, research_complete_at: completeAt }]
-    })
 
-    setTimeout(async () => {
-      const currentLvl = researchMap[tech.type] ?? 0
-      await supabase.from('research').update({
-        level: currentLvl + 1,
-        is_researching: false,
-        research_complete_at: null,
-      }).eq('owner_id', targetPlanet.owner_id).eq('tech_type', tech.type)
+      const existing = research?.find(r => r.tech_type === tech.type)
+      if (existing) {
+        const { error } = await supabase.from('research').update({
+          is_researching: true,
+          research_complete_at: completeAt,
+        }).eq('id', existing.id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('research').insert({
+          owner_id: targetPlanet.owner_id,
+          tech_type: tech.type,
+          level: 0,
+          is_researching: true,
+          research_complete_at: completeAt,
+        })
+        if (error) throw error
+      }
 
-      setResearch(prev => prev.map(r => r.tech_type === tech.type
-        ? { ...r, level: r.level + 1, is_researching: false, research_complete_at: null }
-        : r
-      ))
+      await debitResources(targetPlanet.id, targetResources, cost)
+
+      setResearch(prev => {
+        const exists = prev?.find(r => r.tech_type === tech.type)
+        if (exists) {
+          return prev.map(r => r.tech_type === tech.type
+            ? { ...r, is_researching: true, research_complete_at: completeAt }
+            : r
+          )
+        }
+        return [...(prev ?? []), { tech_type: tech.type, level: 0, is_researching: true, research_complete_at: completeAt }]
+      })
+    } catch (err) {
+      console.error('Research dispatch failed:', err)
+      alert(`Couldn't start research: ${err.message ?? 'unknown error'}. Reload to refresh state.`)
+      // Refund the optimistic deduct on the active planet (other planets weren't optimistically updated)
+      if (isActivePlanet) {
+        setResources(prev => prev ? ({
+          ...prev,
+          metal:     prev.metal + cost.metal,
+          crystal:   prev.crystal + cost.crystal,
+          deuterium: prev.deuterium + (cost.deuterium ?? 0),
+        }) : prev)
+      }
       setResearching(false)
+      return
+    }
+
+    // Complete after timer. Guarded with `.eq('is_researching', true)` so if the
+    // 2s interval completer (or DevPanel speed change) already finished it first,
+    // this stale fire is a no-op rather than a double-increment. We also re-read
+    // the row instead of relying on the stale `researchMap` closure.
+    setTimeout(async () => {
+      try {
+        const { data: row } = await supabase
+          .from('research')
+          .select('id, level')
+          .eq('owner_id', targetPlanet.owner_id)
+          .eq('tech_type', tech.type)
+          .eq('is_researching', true)
+          .maybeSingle()
+
+        if (row) {
+          const { error } = await supabase.from('research').update({
+            level: row.level + 1,
+            is_researching: false,
+            research_complete_at: null,
+          })
+            .eq('id', row.id)
+            .eq('is_researching', true)
+          if (!error) {
+            setResearch(prev => prev.map(r => r.tech_type === tech.type && r.is_researching
+              ? { ...r, level: r.level + 1, is_researching: false, research_complete_at: null }
+              : r
+            ))
+          }
+        }
+      } catch (err) {
+        console.error('Research completion failed:', err)
+      } finally {
+        setResearching(false)
+      }
     }, researchTime * 1000)
   }
 

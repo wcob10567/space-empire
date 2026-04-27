@@ -25,3 +25,9 @@ dist-ssr
 
 .env
 .mcp.json
+backups/
+
+# Claude Code: per-session/per-user state stays out of git.
+# `.claude/commands/` (project-level slash commands) IS tracked.
+.claude/settings.local.json
+.claude/worktrees/

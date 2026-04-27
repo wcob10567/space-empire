@@ -21,7 +21,7 @@ function validateName(name) {
   const trimmed = name.trim()
   if (trimmed.length < 3) return 'Name must be at least 3 characters.'
   if (trimmed.length > 24) return 'Name must be 24 characters or less.'
-  if (!/^[a-zA-Z0-9 '\-]+$/.test(trimmed)) return 'Only letters, numbers, spaces, apostrophes and hyphens allowed.'
+  if (!/^[a-zA-Z0-9 '-]+$/.test(trimmed)) return 'Only letters, numbers, spaces, apostrophes and hyphens allowed.'
   if (/^\d+$/.test(trimmed)) return 'Name cannot be all numbers.'
   if (/\s{2,}/.test(trimmed)) return 'No double spaces allowed.'
   const lower = trimmed.toLowerCase()

@@ -12,10 +12,9 @@ import Galaxy from './pages/Galaxy'
 import Fleet from './pages/Fleet'
 import DevPanel from './components/DevPanel'
 import Reports from './pages/Reports'
+import { TICK } from './config/tick'
+import { queries } from './services/queries'
 
-const TICK_INTERVAL = 5000
-const FLEET_TICK = 3000
-const NPC_TICK = 300000
 const ACTIVE_PLANET_KEY = 'space-empire-active-planet'
 
 function ProtectedRoute({ children }) {
@@ -75,18 +74,10 @@ function Game() {
     async function loadUserData() {
       await supabase.rpc('update_last_online', { p_user_id: user.id })
 
-      const { data: planetData } = await supabase
-        .from('planets')
-        .select('*')
-        .eq('owner_id', user.id)
-        .order('is_homeworld', { ascending: false })
-        .order('created_at', { ascending: true })
-      if (planetData) setPlanets(planetData)
+      const { data: planetData }   = await queries.planetsForUser(user.id)
+      if (planetData)   setPlanets(planetData)
 
-      const { data: researchData } = await supabase
-        .from('research')
-        .select('*')
-        .eq('owner_id', user.id)
+      const { data: researchData } = await queries.researchForUser(user.id)
       if (researchData) setResearch(researchData)
     }
     loadUserData()
@@ -100,9 +91,9 @@ function Game() {
     setShips([])
     async function loadPlanetData() {
       const [{ data: resData }, { data: bldData }, { data: shipData }] = await Promise.all([
-        supabase.from('resources').select('*').eq('planet_id', planet.id).single(),
-        supabase.from('buildings').select('*').eq('planet_id', planet.id),
-        supabase.from('ships').select('*').eq('planet_id', planet.id),
+        queries.resources(planet.id),
+        queries.buildings(planet.id),
+        queries.ships(planet.id),
       ])
       if (resData) setResources(resData)
       if (bldData) setBuildings(bldData)
@@ -118,7 +109,7 @@ function Game() {
     const interval = setInterval(() => {
       setResources(prev => {
         if (!prev) return prev
-        const tickAmount = TICK_INTERVAL / 1000 / 3600
+        const tickAmount = TICK.RESOURCES_MS / 1000 / 3600
         return {
           ...prev,
           metal:     Math.min(prev.metal + prod.metal * tickAmount, prev.metal_cap),
@@ -127,7 +118,7 @@ function Game() {
           energy:    prod.energy,
         }
       })
-    }, TICK_INTERVAL)
+    }, TICK.RESOURCES_MS)
     return () => clearInterval(interval)
   }, [resources, buildings, getProduction])
 
@@ -138,12 +129,7 @@ function Game() {
     async function tick() {
       await supabase.rpc('process_arrived_fleets')
 
-      const { data: planetData } = await supabase
-        .from('planets')
-        .select('*')
-        .eq('owner_id', user.id)
-        .order('is_homeworld', { ascending: false })
-        .order('created_at', { ascending: true })
+      const { data: planetData } = await queries.planetsForUser(user.id)
       if (planetData) {
         setPlanets(prev => {
           const prevKey = prev.map(p => p.id).join()
@@ -154,10 +140,7 @@ function Game() {
       }
 
       if (planet?.id) {
-        const { data } = await supabase
-          .from('ships')
-          .select('*')
-          .eq('planet_id', planet.id)
+        const { data } = await queries.ships(planet.id)
         if (data) setShips(data)
       }
     }
@@ -166,8 +149,8 @@ function Game() {
     }
     tick()
     restockNpcs()
-    const fleetInterval = setInterval(tick, FLEET_TICK)
-    const npcInterval = setInterval(restockNpcs, NPC_TICK)
+    const fleetInterval = setInterval(tick, TICK.FLEET_PROCESS_MS)
+    const npcInterval = setInterval(restockNpcs, TICK.NPC_RESTOCK_MS)
     return () => {
       clearInterval(fleetInterval)
       clearInterval(npcInterval)

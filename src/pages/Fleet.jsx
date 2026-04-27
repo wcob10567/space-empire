@@ -2,20 +2,9 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { Send, Clock, X, Rocket, Package, Search, Target, Globe, Recycle, Home } from 'lucide-react'
-
-// ─── Ship definitions ─────────────────────────────────────────────────────────
-const SHIP_STATS = {
-  light_fighter:   { name: 'Light Fighter',   icon: '✈️',  speed: 12500,     cargo: 50      },
-  heavy_fighter:   { name: 'Heavy Fighter',   icon: '🛩️', speed: 10000,     cargo: 100     },
-  cruiser:         { name: 'Cruiser',         icon: '🚀',  speed: 15000,     cargo: 800     },
-  battleship:      { name: 'Battleship',      icon: '⚓',  speed: 10000,     cargo: 1500    },
-  bomber:          { name: 'Bomber',          icon: '💣',  speed: 4000,      cargo: 500     },
-  destroyer:       { name: 'Destroyer',       icon: '🛸',  speed: 5000,      cargo: 2000    },
-  deathstar:       { name: 'Deathstar',       icon: '🌑',  speed: 100,       cargo: 1000000 },
-  colony_ship:     { name: 'Colony Ship',     icon: '🏗️', speed: 2500,      cargo: 7500    },
-  recycler:        { name: 'Recycler',        icon: '♻️',  speed: 2000,      cargo: 20000   },
-  espionage_probe: { name: 'Espionage Probe', icon: '🔍',  speed: 100000000, cargo: 5       },
-}
+import { SHIP_STATS } from '../data/ships'
+import { TICK } from '../config/tick'
+import { queries } from '../services/queries'
 
 // Which ships are allowed per mission (null = all ships)
 const MISSION_SHIPS = {
@@ -225,31 +214,39 @@ function QuickDispatchForm({ planet, ships, resources, research, pendingMission,
       return
     }
 
-    await supabase.from('fleets').insert({
-      owner_id: user?.id,
-      origin_planet_id: planet.id,
-      target_planet_id: mission === 'colonize' ? null : (targetPlanet?.id ?? null),
-      mission_type: mission,
-      ship_payload: selectedShips,
-      cargo,
-      departs_at: departsAt,
-      arrives_at: arrivesAt,
-      returns_at: returnsAt,
-      status: 'in_flight',
-      target_coords: `${target.galaxy}:${target.system}:${target.position}`,
-    })
+    try {
+      const { error: fleetErr } = await supabase.from('fleets').insert({
+        owner_id: user?.id,
+        origin_planet_id: planet.id,
+        target_planet_id: mission === 'colonize' ? null : (targetPlanet?.id ?? null),
+        mission_type: mission,
+        ship_payload: selectedShips,
+        cargo,
+        departs_at: departsAt,
+        arrives_at: arrivesAt,
+        returns_at: returnsAt,
+        status: 'in_flight',
+        target_coords: `${target.galaxy}:${target.system}:${target.position}`,
+      })
+      if (fleetErr) throw fleetErr
 
-    for (const [type, qty] of Object.entries(selectedShips)) {
-      if (qty <= 0) continue
-      const ship = ships.find(s => s.ship_type === type)
-      if (ship) {
-        await supabase.from('ships').update({ quantity: ship.quantity - qty })
-          .eq('planet_id', planet.id).eq('ship_type', type)
+      for (const [type, qty] of Object.entries(selectedShips)) {
+        if (qty <= 0) continue
+        const ship = ships.find(s => s.ship_type === type)
+        if (ship) {
+          const { error } = await supabase.from('ships').update({ quantity: ship.quantity - qty })
+            .eq('planet_id', planet.id).eq('ship_type', type)
+          if (error) throw error
+        }
       }
-    }
 
-    onDispatch()
-    setSending(false)
+      onDispatch()
+    } catch (err) {
+      console.error('Fleet dispatch failed:', err)
+      alert(`Couldn't dispatch fleet: ${err.message ?? 'unknown error'}. Reload — your ships may already be deducted.`)
+    } finally {
+      setSending(false)
+    }
   }
 
   return (
@@ -421,12 +418,7 @@ useEffect(() => {
     loadFleets()
     // ✅ Only poll for fleet status updates — App.jsx handles process_arrived_fleets
     const interval = setInterval(async () => {
-      const { data } = await supabase
-        .from('fleets')
-        .select('*')
-        .eq('owner_id', user?.id)
-        .eq('status', 'in_flight')
-        .order('arrives_at', { ascending: true })
+      const { data } = await queries.fleetsInFlight(user?.id)
       if (data) {
         setFleets(prev => {
           const prevIds = prev.map(f => f.id + f.is_returning).join()
@@ -435,7 +427,7 @@ useEffect(() => {
           return data
         })
       }
-    }, 3000)
+    }, TICK.FLEET_LIST_MS)
     return () => clearInterval(interval)
   }, [user?.id])
 
@@ -449,12 +441,7 @@ useEffect(() => {
 
   async function loadFleets() {
     setLoading(true)
-    const { data } = await supabase
-      .from('fleets')
-      .select('*')
-      .eq('owner_id', user?.id)
-      .eq('status', 'in_flight')
-      .order('arrives_at', { ascending: true })
+    const { data } = await queries.fleetsInFlight(user?.id)
     setFleets(data ?? [])
     setLoading(false)
   }
@@ -463,7 +450,7 @@ useEffect(() => {
     setShowDispatch(false)
     setPendingMission(null)
     await loadFleets()
-    const { data } = await supabase.from('ships').select('*').eq('planet_id', planet.id)
+    const { data } = await queries.ships(planet.id)
     if (data) setShips(data)
   }
 

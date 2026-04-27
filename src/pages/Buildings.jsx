@@ -1,160 +1,9 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { Building2, Clock, ChevronUp, Zap } from 'lucide-react'
-
-const BUILDINGS = [
-  {
-    type: 'metal_mine',
-    name: 'Metal Mine',
-    category: 'Resources',
-    description: 'Extracts metal ore from the planet surface.',
-    icon: '⛏️',
-    baseCost: { metal: 60, crystal: 15 },
-    baseProd: (lvl) => Math.floor(30 * lvl * Math.pow(1.1, lvl)),
-    energyUse: (lvl) => Math.floor(10 * lvl * Math.pow(1.1, lvl)),
-  },
-  {
-    type: 'crystal_mine',
-    name: 'Crystal Mine',
-    category: 'Resources',
-    description: 'Harvests crystal formations beneath the crust.',
-    icon: '💎',
-    baseCost: { metal: 48, crystal: 24 },
-    baseProd: (lvl) => Math.floor(20 * lvl * Math.pow(1.1, lvl)),
-    energyUse: (lvl) => Math.floor(10 * lvl * Math.pow(1.1, lvl)),
-  },
-  {
-    type: 'deuterium_synthesizer',
-    name: 'Deuterium Synthesizer',
-    category: 'Resources',
-    description: 'Extracts deuterium from the atmosphere.',
-    icon: '🔵',
-    baseCost: { metal: 225, crystal: 75 },
-    baseProd: (lvl) => Math.floor(10 * lvl * Math.pow(1.1, lvl)),
-    energyUse: (lvl) => Math.floor(20 * lvl * Math.pow(1.1, lvl)),
-  },
-  {
-    type: 'solar_plant',
-    name: 'Solar Plant',
-    category: 'Energy',
-    description: 'Converts solar energy into usable power.',
-    icon: '☀️',
-    baseCost: { metal: 75, crystal: 30 },
-    baseProd: (lvl) => Math.floor(20 * lvl * Math.pow(1.1, lvl)),
-    energyUse: () => 0,
-  },
-  {
-    type: 'fusion_reactor',
-    name: 'Fusion Reactor',
-    category: 'Energy',
-    description: 'Advanced energy source using deuterium fusion.',
-    icon: '⚡',
-    baseCost: { metal: 900, crystal: 360, deuterium: 180 },
-    baseProd: (lvl) => Math.floor(30 * lvl * Math.pow(1.05, lvl)),
-    energyUse: () => 0,
-  },
-  {
-    type: 'metal_storage',
-    name: 'Metal Storage',
-    category: 'Storage',
-    description: 'Increases metal storage capacity.',
-    icon: '🏭',
-    baseCost: { metal: 1000, crystal: 0 },
-    baseProd: () => 0,
-    energyUse: () => 0,
-  },
-  {
-    type: 'crystal_storage',
-    name: 'Crystal Storage',
-    category: 'Storage',
-    description: 'Increases crystal storage capacity.',
-    icon: '🔷',
-    baseCost: { metal: 1000, crystal: 500 },
-    baseProd: () => 0,
-    energyUse: () => 0,
-  },
-  {
-    type: 'deuterium_tank',
-    name: 'Deuterium Tank',
-    category: 'Storage',
-    description: 'Increases deuterium storage capacity.',
-    icon: '🛢️',
-    baseCost: { metal: 1000, crystal: 1000 },
-    baseProd: () => 0,
-    energyUse: () => 0,
-  },
-  {
-    type: 'robotics_factory',
-    name: 'Robotics Factory',
-    category: 'Facilities',
-    description: 'Reduces construction time for all buildings.',
-    icon: '🤖',
-    baseCost: { metal: 400, crystal: 120, deuterium: 200 },
-    baseProd: () => 0,
-    energyUse: () => 0,
-  },
-  {
-    type: 'shipyard',
-    name: 'Shipyard',
-    category: 'Facilities',
-    description: 'Required to build ships and defenses.',
-    icon: '🚀',
-    baseCost: { metal: 400, crystal: 200, deuterium: 100 },
-    baseProd: () => 0,
-    energyUse: () => 0,
-  },
-  {
-    type: 'research_lab',
-    name: 'Research Lab',
-    category: 'Facilities',
-    description: 'Required to research new technologies.',
-    icon: '🔬',
-    baseCost: { metal: 200, crystal: 400, deuterium: 200 },
-    baseProd: () => 0,
-    energyUse: () => 0,
-  },
-  {
-    type: 'nanite_factory',
-    name: 'Nanite Factory',
-    category: 'Facilities',
-    description: 'Drastically reduces all construction times.',
-    icon: '🧬',
-    baseCost: { metal: 1000000, crystal: 500000, deuterium: 100000 },
-    baseProd: () => 0,
-    energyUse: () => 0,
-  },
-  {
-    type: 'missile_silo',
-    name: 'Missile Silo',
-    category: 'Facilities',
-    description: 'Stores and launches interplanetary missiles.',
-    icon: '🎯',
-    baseCost: { metal: 20000, crystal: 20000, deuterium: 1000 },
-    baseProd: () => 0,
-    energyUse: () => 0,
-  },
-  {
-    type: 'underground_vault',
-    name: 'Underground Vault',
-    category: 'Storage',
-    description: 'Hides a portion of your resources from raiders. Higher levels protect more.',
-    icon: '🔒',
-    baseCost: { metal: 20000, crystal: 10000, deuterium: 0 },
-    baseProd: () => 0,
-    energyUse: () => 0,
-    // Each level increases base bunker % by 1.5% up to 15% at level 10
-    vaultBonus: (lvl) => Math.min(15, Math.floor(lvl * 1.5)),
-  },
-]
-
-const BUILDING_TYPES = [
-  'metal_mine', 'crystal_mine', 'deuterium_synthesizer', 'solar_plant',
-  'fusion_reactor', 'metal_storage', 'crystal_storage', 'deuterium_tank',
-  'robotics_factory', 'shipyard', 'research_lab', 'nanite_factory',
-  'missile_silo', 'underground_vault',
-]
-
-const CATEGORIES = ['Resources', 'Energy', 'Storage', 'Facilities']
+import { BUILDINGS, ALL_BUILDING_TYPES as BUILDING_TYPES, BUILDING_CATEGORIES as CATEGORIES } from '../data/buildings'
+import { TICK } from '../config/tick'
+import { debitResources } from '../services/resources'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function getUpgradeCost(building, currentLevel) {
@@ -325,20 +174,27 @@ export default function Buildings({ planet, resources, buildings, setBuildings, 
       )
       for (const b of completed) {
         if (cancelled) return
-        await supabase.from('buildings').update({
+        const { error } = await supabase.from('buildings').update({
           level: b.level + 1,
           is_upgrading: false,
           upgrade_complete_at: null,
-        }).eq('id', b.id)
+        })
+          .eq('id', b.id)
+          .eq('is_upgrading', true)  // guard so a stale setTimeout can't double-increment
+        if (error) continue
         setBuildings(prev => prev.map(pb =>
-          pb.id === b.id
+          pb.id === b.id && pb.is_upgrading
             ? { ...pb, level: pb.level + 1, is_upgrading: false, upgrade_complete_at: null }
             : pb
         ))
       }
+      // Release the local dispatch lock once anything finishes — otherwise a
+      // speed-shrink that completes an upgrade via this interval would leave
+      // the page-local `upgrading` flag stuck until the original setTimeout fires.
+      if (completed.length > 0) setUpgrading(false)
     }
     checkCompleted()
-    const interval = setInterval(checkCompleted, 2000)
+    const interval = setInterval(checkCompleted, TICK.COMPLETION_POLL_MS)
     return () => { cancelled = true; clearInterval(interval) }
   }, [planet, buildings, setBuildings])
 
@@ -349,57 +205,78 @@ export default function Buildings({ planet, resources, buildings, setBuildings, 
     const buildTime = getBuildTime(cost, roboticsLvl)
     const completeAt = new Date(Date.now() + buildTime * 1000).toISOString()
 
-    // Deduct resources locally
-    setResources(prev => ({
-      ...prev,
-      metal:     prev.metal - cost.metal,
-      crystal:   prev.crystal - cost.crystal,
-      deuterium: prev.deuterium - (cost.deuterium ?? 0),
-    }))
+    try {
+      // Deduct resources locally for snappy UI; refunded in catch on failure
+      setResources(prev => ({
+        ...prev,
+        metal:     prev.metal - cost.metal,
+        crystal:   prev.crystal - cost.crystal,
+        deuterium: prev.deuterium - (cost.deuterium ?? 0),
+      }))
 
-    // Update building in DB
-    await supabase.from('buildings').update({
-      is_upgrading: true,
-      upgrade_complete_at: completeAt,
-    }).eq('planet_id', planet.id).eq('building_type', building.type)
+      // Mark upgrading in DB
+      const { error: bldErr } = await supabase.from('buildings').update({
+        is_upgrading: true,
+        upgrade_complete_at: completeAt,
+      }).eq('planet_id', planet.id).eq('building_type', building.type)
+      if (bldErr) throw bldErr
 
-    // Deduct resources in DB
-    await supabase.from('resources').update({
-      metal:     resources.metal - cost.metal,
-      crystal:   resources.crystal - cost.crystal,
-      deuterium: resources.deuterium - (cost.deuterium ?? 0),
-    }).eq('planet_id', planet.id)
+      // Debit resources in DB (uses cached snapshot — same staleness risk as before)
+      await debitResources(planet.id, resources, cost)
 
-    // Update local buildings state
-    setBuildings(prev => prev.map(b =>
-      b.building_type === building.type
-        ? { ...b, is_upgrading: true, upgrade_complete_at: completeAt }
-        : b
-    ))
-
-    // Complete after timer
-    setTimeout(async () => {
-      const { data: updated } = await supabase
-        .from('buildings')
-        .select('*')
-        .eq('planet_id', planet.id)
-        .eq('building_type', building.type)
-        .single()
-
-      if (updated) {
-        await supabase.from('buildings').update({
-          level: updated.level + 1,
-          is_upgrading: false,
-          upgrade_complete_at: null,
-        }).eq('planet_id', planet.id).eq('building_type', building.type)
-
-        setBuildings(prev => prev.map(b =>
-          b.building_type === building.type
-            ? { ...b, level: updated.level + 1, is_upgrading: false, upgrade_complete_at: null }
-            : b
-        ))
-      }
+      setBuildings(prev => prev.map(b =>
+        b.building_type === building.type
+          ? { ...b, is_upgrading: true, upgrade_complete_at: completeAt }
+          : b
+      ))
+    } catch (err) {
+      console.error('Upgrade failed:', err)
+      alert(`Couldn't start the upgrade: ${err.message ?? 'unknown error'}. Reload to refresh state.`)
+      // Refund the optimistic deduct so the resource bar isn't a lie
+      setResources(prev => ({
+        ...prev,
+        metal:     prev.metal + cost.metal,
+        crystal:   prev.crystal + cost.crystal,
+        deuterium: prev.deuterium + (cost.deuterium ?? 0),
+      }))
       setUpgrading(false)
+      return
+    }
+
+    // Complete after timer. Guarded with `.eq('is_upgrading', true)` so if the 2s
+    // interval completer (or DevPanel speed change) already finished it first,
+    // this stale fire is a no-op rather than a double-increment.
+    setTimeout(async () => {
+      try {
+        const { data: updated } = await supabase
+          .from('buildings')
+          .select('*')
+          .eq('planet_id', planet.id)
+          .eq('building_type', building.type)
+          .eq('is_upgrading', true)
+          .maybeSingle()
+
+        if (updated) {
+          const { error } = await supabase.from('buildings').update({
+            level: updated.level + 1,
+            is_upgrading: false,
+            upgrade_complete_at: null,
+          })
+            .eq('id', updated.id)
+            .eq('is_upgrading', true)
+          if (!error) {
+            setBuildings(prev => prev.map(b =>
+              b.building_type === building.type && b.is_upgrading
+                ? { ...b, level: b.level + 1, is_upgrading: false, upgrade_complete_at: null }
+                : b
+            ))
+          }
+        }
+      } catch (err) {
+        console.error('Upgrade completion failed:', err)
+      } finally {
+        setUpgrading(false)
+      }
     }, buildTime * 1000)
   }
 

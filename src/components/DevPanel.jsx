@@ -1,24 +1,11 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { Terminal, ChevronDown, ChevronUp, Zap, Coins, Building2, FlaskConical, Rocket, RotateCcw } from 'lucide-react'
-
-const BUILDING_TYPES = [
-  'metal_mine', 'crystal_mine', 'deuterium_synthesizer', 'solar_plant',
-  'fusion_reactor', 'metal_storage', 'crystal_storage', 'deuterium_tank',
-  'robotics_factory', 'shipyard', 'research_lab', 'nanite_factory', 
-  'missile_silo', 'underground_vault',
-]
-
-const TECH_TYPES = [
-  'energy_tech', 'laser_tech', 'ion_tech', 'weapons_tech', 'shielding_tech', 'armor_tech',
-  'combustion_drive', 'impulse_drive', 'hyperspace_drive', 'hyperspace_tech', 'graviton_tech',
-  'espionage_tech', 'computer_tech', 'astrophysics', 'intergalactic_research', 'plasma_tech',
-]
-
-const SHIP_TYPES = [
-  'light_fighter', 'heavy_fighter', 'cruiser', 'battleship', 'bomber',
-  'destroyer', 'deathstar', 'colony_ship', 'recycler', 'espionage_probe',
-]
+import { ALL_BUILDING_TYPES as BUILDING_TYPES } from '../data/buildings'
+import { TECH_TYPES } from '../data/techTree'
+import { SHIP_TYPES } from '../data/ships'
+import { TICK } from '../config/tick'
+import { queries } from '../services/queries'
 
 const SPEED_OPTIONS = [
   { label: '1x (normal)', value: 1 },
@@ -133,11 +120,22 @@ export default function DevPanel({ planet, resources, buildings, research, ships
       }
     }
 
-    addLog(`Scaled ${fleetCount} fleet(s), ${buildCount} build(s), ${researchCount} research(es) — reloading...`)
+    // Refresh local state so the on-screen countdowns update immediately with the new
+    // (scaled) DB times. Buildings/research per active planet only — other planets pick
+    // up fresh data when the user switches to them. Fleets propagate via App's 3s tick.
+    const refreshes = []
+    if (planet?.id) {
+      refreshes.push(
+        queries.buildings(planet.id).then(({ data }) => { if (data) setBuildings(data) }),
+        queries.ships(planet.id).then(({ data }) => { if (data) setShips(data) }),
+      )
+    }
+    refreshes.push(
+      queries.researchForUser(ownerId).then(({ data }) => { if (data) setResearch(data) }),
+    )
+    await Promise.all(refreshes)
 
-    // Reload to clear stale in-page setTimeouts so DB-driven completion takes over.
-    // Shipyard ship builds use only local state, so any in-progress build will be lost — dev tool limitation.
-    setTimeout(() => window.location.reload(), 200)
+    addLog(`Scaled ${fleetCount} fleet(s), ${buildCount} build(s), ${researchCount} research(es) — applied live`)
   }
 
   async function addResources() {
@@ -202,7 +200,7 @@ export default function DevPanel({ planet, resources, buildings, research, ships
         await supabase.from('research').insert({ owner_id: planet.owner_id, tech_type: type, level: 25 })
       }
     }
-    const { data } = await supabase.from('research').select('*').eq('owner_id', planet.owner_id)
+    const { data } = await queries.researchForUser(planet.owner_id)
     if (data) setResearch(data)
     addLog('All research maxed to level 25!')
   }
@@ -230,7 +228,7 @@ export default function DevPanel({ planet, resources, buildings, research, ships
         await supabase.from('ships').insert({ planet_id: planet.id, ship_type: type, quantity: 100 })
       }
     }
-    const { data } = await supabase.from('ships').select('*').eq('planet_id', planet.id)
+    const { data } = await queries.ships(planet.id)
     if (data) setShips(data)
     addLog('Added 100 of every ship type!')
   }
