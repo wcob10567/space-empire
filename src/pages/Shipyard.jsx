@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { Rocket, Lock, AlertTriangle, Clock, Plus, Minus } from 'lucide-react'
 import { SHIPS, DEFENSES, SHIPYARD_CATEGORIES as CATEGORIES } from '../data/ships'
+import { debitResources } from '../services/resources'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function getBuildTime(cost, shipyardLvl, naniteLvl) {
@@ -216,11 +217,7 @@ export default function Shipyard({ planet, resources, buildings, research, ships
     }))
 
     // Deduct resources in DB
-    await supabase.from('resources').update({
-      metal:     resources.metal - cost.metal,
-      crystal:   resources.crystal - cost.crystal,
-      deuterium: resources.deuterium - cost.deuterium,
-    }).eq('planet_id', planet.id)
+    await debitResources(planet.id, resources, cost)
 
     // Set build queue locally
     setBuildQueue(prev => ({ ...prev, [item.type]: { qty, completeAt } }))

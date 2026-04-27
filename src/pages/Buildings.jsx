@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { Building2, Clock, ChevronUp, Zap } from 'lucide-react'
 import { BUILDINGS, ALL_BUILDING_TYPES as BUILDING_TYPES, BUILDING_CATEGORIES as CATEGORIES } from '../data/buildings'
 import { TICK } from '../config/tick'
+import { debitResources } from '../services/resources'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function getUpgradeCost(building, currentLevel) {
@@ -211,12 +212,8 @@ export default function Buildings({ planet, resources, buildings, setBuildings, 
       upgrade_complete_at: completeAt,
     }).eq('planet_id', planet.id).eq('building_type', building.type)
 
-    // Deduct resources in DB
-    await supabase.from('resources').update({
-      metal:     resources.metal - cost.metal,
-      crystal:   resources.crystal - cost.crystal,
-      deuterium: resources.deuterium - (cost.deuterium ?? 0),
-    }).eq('planet_id', planet.id)
+    // Deduct resources in DB (caller's cached snapshot; same staleness risk as before)
+    await debitResources(planet.id, resources, cost)
 
     // Update local buildings state
     setBuildings(prev => prev.map(b =>

@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext'
 import { Send, Clock, X, Rocket, Package, Search, Target, Globe, Recycle, Home } from 'lucide-react'
 import { SHIP_STATS } from '../data/ships'
 import { TICK } from '../config/tick'
+import { queries } from '../services/queries'
 
 // Which ships are allowed per mission (null = all ships)
 const MISSION_SHIPS = {
@@ -409,12 +410,7 @@ useEffect(() => {
     loadFleets()
     // ✅ Only poll for fleet status updates — App.jsx handles process_arrived_fleets
     const interval = setInterval(async () => {
-      const { data } = await supabase
-        .from('fleets')
-        .select('*')
-        .eq('owner_id', user?.id)
-        .eq('status', 'in_flight')
-        .order('arrives_at', { ascending: true })
+      const { data } = await queries.fleetsInFlight(user?.id)
       if (data) {
         setFleets(prev => {
           const prevIds = prev.map(f => f.id + f.is_returning).join()
@@ -437,12 +433,7 @@ useEffect(() => {
 
   async function loadFleets() {
     setLoading(true)
-    const { data } = await supabase
-      .from('fleets')
-      .select('*')
-      .eq('owner_id', user?.id)
-      .eq('status', 'in_flight')
-      .order('arrives_at', { ascending: true })
+    const { data } = await queries.fleetsInFlight(user?.id)
     setFleets(data ?? [])
     setLoading(false)
   }
@@ -451,7 +442,7 @@ useEffect(() => {
     setShowDispatch(false)
     setPendingMission(null)
     await loadFleets()
-    const { data } = await supabase.from('ships').select('*').eq('planet_id', planet.id)
+    const { data } = await queries.ships(planet.id)
     if (data) setShips(data)
   }
 

@@ -3,6 +3,8 @@ import { supabase } from '../lib/supabase'
 import { FlaskConical, Clock, ChevronUp, Lock, AlertTriangle, X } from 'lucide-react'
 import { TECH_TREE, TECH_BRANCHES as BRANCHES } from '../data/techTree'
 import { TICK } from '../config/tick'
+import { queries } from '../services/queries'
+import { debitResources } from '../services/resources'
 
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -361,8 +363,8 @@ export default function Research({ planet, planets, resources, buildings, resear
     async function loadAll() {
       const ids = planets.map(p => p.id)
       const [{ data: bld }, { data: res }] = await Promise.all([
-        supabase.from('buildings').select('*').in('planet_id', ids),
-        supabase.from('resources').select('*').in('planet_id', ids),
+        queries.buildingsForPlanets(ids),
+        queries.resourcesForPlanets(ids),
       ])
       if (cancelled) return
       const byPlanet = {}
@@ -447,11 +449,7 @@ export default function Research({ planet, planets, resources, buildings, resear
       })
     }
 
-    await supabase.from('resources').update({
-      metal:     targetResources.metal - cost.metal,
-      crystal:   targetResources.crystal - cost.crystal,
-      deuterium: targetResources.deuterium - (cost.deuterium ?? 0),
-    }).eq('planet_id', targetPlanet.id)
+    await debitResources(targetPlanet.id, targetResources, cost)
 
     setResearch(prev => {
       const exists = prev?.find(r => r.tech_type === tech.type)

@@ -5,6 +5,7 @@ import { ALL_BUILDING_TYPES as BUILDING_TYPES } from '../data/buildings'
 import { TECH_TYPES } from '../data/techTree'
 import { SHIP_TYPES } from '../data/ships'
 import { TICK } from '../config/tick'
+import { queries } from '../services/queries'
 
 const SPEED_OPTIONS = [
   { label: '1x (normal)', value: 1 },
@@ -188,7 +189,7 @@ export default function DevPanel({ planet, resources, buildings, research, ships
         await supabase.from('research').insert({ owner_id: planet.owner_id, tech_type: type, level: 25 })
       }
     }
-    const { data } = await supabase.from('research').select('*').eq('owner_id', planet.owner_id)
+    const { data } = await queries.researchForUser(planet.owner_id)
     if (data) setResearch(data)
     addLog('All research maxed to level 25!')
   }
@@ -216,7 +217,7 @@ export default function DevPanel({ planet, resources, buildings, research, ships
         await supabase.from('ships').insert({ planet_id: planet.id, ship_type: type, quantity: 100 })
       }
     }
-    const { data } = await supabase.from('ships').select('*').eq('planet_id', planet.id)
+    const { data } = await queries.ships(planet.id)
     if (data) setShips(data)
     addLog('Added 100 of every ship type!')
   }
