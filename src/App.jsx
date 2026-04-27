@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { supabase } from './lib/supabase'
@@ -14,6 +14,7 @@ import DevPanel from './components/DevPanel'
 import Reports from './pages/Reports'
 import { TICK } from './config/tick'
 import { queries } from './services/queries'
+import { sumReservation } from './services/buildQueue'
 
 const ACTIVE_PLANET_KEY = 'space-empire-active-planet'
 
@@ -43,8 +44,14 @@ function Game() {
   const [buildings, setBuildings] = useState([])
   const [research, setResearch] = useState([])
   const [ships, setShips] = useState([])
+  const [buildingQueue, setBuildingQueue] = useState([])
 
   const planet = planets.find(p => p.id === activePlanetId) ?? planets[0] ?? null
+
+  // Reservation = sum of queued costs for the active planet. Reduces what's
+  // spendable but does NOT reduce balance (resources stay plunderable until
+  // a queued build actually starts).
+  const reservation = useMemo(() => sumReservation(buildingQueue), [buildingQueue])
 
   const setActivePlanetId = useCallback((id) => {
     setActivePlanetIdState(id)
@@ -89,15 +96,23 @@ function Game() {
     setResources(null)
     setBuildings([])
     setShips([])
+    setBuildingQueue([])
     async function loadPlanetData() {
-      const [{ data: resData }, { data: bldData }, { data: shipData }] = await Promise.all([
+      const [
+        { data: resData },
+        { data: bldData },
+        { data: shipData },
+        { data: queueData },
+      ] = await Promise.all([
         queries.resources(planet.id),
         queries.buildings(planet.id),
         queries.ships(planet.id),
+        queries.buildingQueue(planet.id),
       ])
-      if (resData) setResources(resData)
-      if (bldData) setBuildings(bldData)
-      if (shipData) setShips(shipData)
+      if (resData)   setResources(resData)
+      if (bldData)   setBuildings(bldData)
+      if (shipData)  setShips(shipData)
+      if (queueData) setBuildingQueue(queueData)
     }
     loadPlanetData()
   }, [planet?.id])
@@ -138,8 +153,10 @@ function Game() {
       // mark is_upgrading locally so the UI stays in sync without a full refetch
       // (refetching resources would clobber the local production tick).
       if (Array.isArray(queueStarted) && queueStarted.length > 0 && planet?.id) {
+        let activePlanetHadStart = false
         for (const ev of queueStarted) {
           if (ev.planet_id !== planet.id) continue
+          activePlanetHadStart = true
           setResources(prev => prev ? ({
             ...prev,
             metal:     prev.metal     - (ev.metal     ?? 0),
@@ -151,6 +168,13 @@ function Game() {
               ? { ...b, is_upgrading: true, upgrade_complete_at: ev.complete_at }
               : b
           ))
+        }
+        // Refetch queue once if anything started on the active planet — the
+        // started rows have been deleted server-side and positions may have
+        // shifted; cheaper than tracking individual deletions in local state.
+        if (activePlanetHadStart) {
+          const { data: q } = await queries.buildingQueue(planet.id)
+          if (q) setBuildingQueue(q)
         }
       }
 
@@ -196,7 +220,7 @@ function Game() {
       case 'overview':
         return <Overview planet={planet} resources={resources} buildings={buildings} profile={profile} setProfile={setProfile} />
       case 'buildings':
-        return <Buildings planet={planet} resources={resources} buildings={buildings} setBuildings={setBuildings} setResources={setResources} />
+        return <Buildings planet={planet} resources={resources} buildings={buildings} setBuildings={setBuildings} setResources={setResources} buildingQueue={buildingQueue} setBuildingQueue={setBuildingQueue} reservation={reservation} />
       case 'research':
         return <Research planet={planet} planets={planets} resources={resources} buildings={buildings} research={research} setResearch={setResearch} setResources={setResources} />
       case 'shipyard':
@@ -224,6 +248,7 @@ function Game() {
       activePage={activePage}
       setActivePage={setActivePage}
       resources={resources}
+      reservation={reservation}
       planet={planet}
       planets={planets}
       onSelectPlanet={setActivePlanetId}
