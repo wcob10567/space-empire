@@ -174,17 +174,24 @@ export default function Buildings({ planet, resources, buildings, setBuildings, 
       )
       for (const b of completed) {
         if (cancelled) return
-        await supabase.from('buildings').update({
+        const { error } = await supabase.from('buildings').update({
           level: b.level + 1,
           is_upgrading: false,
           upgrade_complete_at: null,
-        }).eq('id', b.id)
+        })
+          .eq('id', b.id)
+          .eq('is_upgrading', true)  // guard so a stale setTimeout can't double-increment
+        if (error) continue
         setBuildings(prev => prev.map(pb =>
-          pb.id === b.id
+          pb.id === b.id && pb.is_upgrading
             ? { ...pb, level: pb.level + 1, is_upgrading: false, upgrade_complete_at: null }
             : pb
         ))
       }
+      // Release the local dispatch lock once anything finishes — otherwise a
+      // speed-shrink that completes an upgrade via this interval would leave
+      // the page-local `upgrading` flag stuck until the original setTimeout fires.
+      if (completed.length > 0) setUpgrading(false)
     }
     checkCompleted()
     const interval = setInterval(checkCompleted, TICK.COMPLETION_POLL_MS)
@@ -236,7 +243,9 @@ export default function Buildings({ planet, resources, buildings, setBuildings, 
       return
     }
 
-    // Complete after timer (also caught by the on-mount/2s completer for missed timeouts)
+    // Complete after timer. Guarded with `.eq('is_upgrading', true)` so if the 2s
+    // interval completer (or DevPanel speed change) already finished it first,
+    // this stale fire is a no-op rather than a double-increment.
     setTimeout(async () => {
       try {
         const { data: updated } = await supabase
@@ -244,24 +253,27 @@ export default function Buildings({ planet, resources, buildings, setBuildings, 
           .select('*')
           .eq('planet_id', planet.id)
           .eq('building_type', building.type)
-          .single()
+          .eq('is_upgrading', true)
+          .maybeSingle()
 
         if (updated) {
-          await supabase.from('buildings').update({
+          const { error } = await supabase.from('buildings').update({
             level: updated.level + 1,
             is_upgrading: false,
             upgrade_complete_at: null,
-          }).eq('planet_id', planet.id).eq('building_type', building.type)
-
-          setBuildings(prev => prev.map(b =>
-            b.building_type === building.type
-              ? { ...b, level: updated.level + 1, is_upgrading: false, upgrade_complete_at: null }
-              : b
-          ))
+          })
+            .eq('id', updated.id)
+            .eq('is_upgrading', true)
+          if (!error) {
+            setBuildings(prev => prev.map(b =>
+              b.building_type === building.type && b.is_upgrading
+                ? { ...b, level: b.level + 1, is_upgrading: false, upgrade_complete_at: null }
+                : b
+            ))
+          }
         }
       } catch (err) {
         console.error('Upgrade completion failed:', err)
-        // The 2s interval completer (TICK.COMPLETION_POLL_MS) will retry.
       } finally {
         setUpgrading(false)
       }

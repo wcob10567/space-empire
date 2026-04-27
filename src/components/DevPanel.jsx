@@ -120,11 +120,22 @@ export default function DevPanel({ planet, resources, buildings, research, ships
       }
     }
 
-    addLog(`Scaled ${fleetCount} fleet(s), ${buildCount} build(s), ${researchCount} research(es) — reloading...`)
+    // Refresh local state so the on-screen countdowns update immediately with the new
+    // (scaled) DB times. Buildings/research per active planet only — other planets pick
+    // up fresh data when the user switches to them. Fleets propagate via App's 3s tick.
+    const refreshes = []
+    if (planet?.id) {
+      refreshes.push(
+        queries.buildings(planet.id).then(({ data }) => { if (data) setBuildings(data) }),
+        queries.ships(planet.id).then(({ data }) => { if (data) setShips(data) }),
+      )
+    }
+    refreshes.push(
+      queries.researchForUser(ownerId).then(({ data }) => { if (data) setResearch(data) }),
+    )
+    await Promise.all(refreshes)
 
-    // Reload to clear stale in-page setTimeouts so DB-driven completion takes over.
-    // Shipyard ship builds use only local state, so any in-progress build will be lost — dev tool limitation.
-    setTimeout(() => window.location.reload(), TICK.DEV_RELOAD_DELAY_MS)
+    addLog(`Scaled ${fleetCount} fleet(s), ${buildCount} build(s), ${researchCount} research(es) — applied live`)
   }
 
   async function addResources() {

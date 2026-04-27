@@ -338,17 +338,24 @@ export default function Research({ planet, planets, resources, buildings, resear
       )
       for (const r of expired) {
         if (cancelled) return
-        await supabase.from('research').update({
+        const { error } = await supabase.from('research').update({
           level: r.level + 1,
           is_researching: false,
           research_complete_at: null,
-        }).eq('id', r.id)
+        })
+          .eq('id', r.id)
+          .eq('is_researching', true)  // guard against double-fire from a stale setTimeout
+        if (error) continue
         setResearch(prev => prev.map(pr =>
-          pr.tech_type === r.tech_type
+          pr.tech_type === r.tech_type && pr.is_researching
             ? { ...pr, level: pr.level + 1, is_researching: false, research_complete_at: null }
             : pr
         ))
       }
+      // Release the local dispatch lock once anything finishes — otherwise a
+      // speed-shrink that completes via this interval would leave the page-local
+      // `researching` flag stuck until the original setTimeout fires.
+      if (expired.length > 0) setResearching(false)
     }
     checkCompleted()
     const interval = setInterval(checkCompleted, TICK.COMPLETION_POLL_MS)
@@ -480,23 +487,37 @@ export default function Research({ planet, planets, resources, buildings, resear
       return
     }
 
-    // Complete after timer (the 2s interval completer also catches this if the timeout misfires)
+    // Complete after timer. Guarded with `.eq('is_researching', true)` so if the
+    // 2s interval completer (or DevPanel speed change) already finished it first,
+    // this stale fire is a no-op rather than a double-increment. We also re-read
+    // the row instead of relying on the stale `researchMap` closure.
     setTimeout(async () => {
       try {
-        const currentLvl = researchMap[tech.type] ?? 0
-        await supabase.from('research').update({
-          level: currentLvl + 1,
-          is_researching: false,
-          research_complete_at: null,
-        }).eq('owner_id', targetPlanet.owner_id).eq('tech_type', tech.type)
+        const { data: row } = await supabase
+          .from('research')
+          .select('id, level')
+          .eq('owner_id', targetPlanet.owner_id)
+          .eq('tech_type', tech.type)
+          .eq('is_researching', true)
+          .maybeSingle()
 
-        setResearch(prev => prev.map(r => r.tech_type === tech.type
-          ? { ...r, level: r.level + 1, is_researching: false, research_complete_at: null }
-          : r
-        ))
+        if (row) {
+          const { error } = await supabase.from('research').update({
+            level: row.level + 1,
+            is_researching: false,
+            research_complete_at: null,
+          })
+            .eq('id', row.id)
+            .eq('is_researching', true)
+          if (!error) {
+            setResearch(prev => prev.map(r => r.tech_type === tech.type && r.is_researching
+              ? { ...r, level: r.level + 1, is_researching: false, research_complete_at: null }
+              : r
+            ))
+          }
+        }
       } catch (err) {
         console.error('Research completion failed:', err)
-        // The 2s interval completer will retry.
       } finally {
         setResearching(false)
       }
