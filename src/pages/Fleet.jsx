@@ -214,31 +214,39 @@ function QuickDispatchForm({ planet, ships, resources, research, pendingMission,
       return
     }
 
-    await supabase.from('fleets').insert({
-      owner_id: user?.id,
-      origin_planet_id: planet.id,
-      target_planet_id: mission === 'colonize' ? null : (targetPlanet?.id ?? null),
-      mission_type: mission,
-      ship_payload: selectedShips,
-      cargo,
-      departs_at: departsAt,
-      arrives_at: arrivesAt,
-      returns_at: returnsAt,
-      status: 'in_flight',
-      target_coords: `${target.galaxy}:${target.system}:${target.position}`,
-    })
+    try {
+      const { error: fleetErr } = await supabase.from('fleets').insert({
+        owner_id: user?.id,
+        origin_planet_id: planet.id,
+        target_planet_id: mission === 'colonize' ? null : (targetPlanet?.id ?? null),
+        mission_type: mission,
+        ship_payload: selectedShips,
+        cargo,
+        departs_at: departsAt,
+        arrives_at: arrivesAt,
+        returns_at: returnsAt,
+        status: 'in_flight',
+        target_coords: `${target.galaxy}:${target.system}:${target.position}`,
+      })
+      if (fleetErr) throw fleetErr
 
-    for (const [type, qty] of Object.entries(selectedShips)) {
-      if (qty <= 0) continue
-      const ship = ships.find(s => s.ship_type === type)
-      if (ship) {
-        await supabase.from('ships').update({ quantity: ship.quantity - qty })
-          .eq('planet_id', planet.id).eq('ship_type', type)
+      for (const [type, qty] of Object.entries(selectedShips)) {
+        if (qty <= 0) continue
+        const ship = ships.find(s => s.ship_type === type)
+        if (ship) {
+          const { error } = await supabase.from('ships').update({ quantity: ship.quantity - qty })
+            .eq('planet_id', planet.id).eq('ship_type', type)
+          if (error) throw error
+        }
       }
-    }
 
-    onDispatch()
-    setSending(false)
+      onDispatch()
+    } catch (err) {
+      console.error('Fleet dispatch failed:', err)
+      alert(`Couldn't dispatch fleet: ${err.message ?? 'unknown error'}. Reload — your ships may already be deducted.`)
+    } finally {
+      setSending(false)
+    }
   }
 
   return (

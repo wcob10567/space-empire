@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect } from 'react'
-import { supabase } from '../lib/supabase'
 import { Check, X, AlertTriangle, Sparkles, Pencil } from 'lucide-react'
 
 const BLOCKED_WORDS = [

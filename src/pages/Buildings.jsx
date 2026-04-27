@@ -198,53 +198,73 @@ export default function Buildings({ planet, resources, buildings, setBuildings, 
     const buildTime = getBuildTime(cost, roboticsLvl)
     const completeAt = new Date(Date.now() + buildTime * 1000).toISOString()
 
-    // Deduct resources locally
-    setResources(prev => ({
-      ...prev,
-      metal:     prev.metal - cost.metal,
-      crystal:   prev.crystal - cost.crystal,
-      deuterium: prev.deuterium - (cost.deuterium ?? 0),
-    }))
+    try {
+      // Deduct resources locally for snappy UI; refunded in catch on failure
+      setResources(prev => ({
+        ...prev,
+        metal:     prev.metal - cost.metal,
+        crystal:   prev.crystal - cost.crystal,
+        deuterium: prev.deuterium - (cost.deuterium ?? 0),
+      }))
 
-    // Update building in DB
-    await supabase.from('buildings').update({
-      is_upgrading: true,
-      upgrade_complete_at: completeAt,
-    }).eq('planet_id', planet.id).eq('building_type', building.type)
+      // Mark upgrading in DB
+      const { error: bldErr } = await supabase.from('buildings').update({
+        is_upgrading: true,
+        upgrade_complete_at: completeAt,
+      }).eq('planet_id', planet.id).eq('building_type', building.type)
+      if (bldErr) throw bldErr
 
-    // Deduct resources in DB (caller's cached snapshot; same staleness risk as before)
-    await debitResources(planet.id, resources, cost)
+      // Debit resources in DB (uses cached snapshot — same staleness risk as before)
+      await debitResources(planet.id, resources, cost)
 
-    // Update local buildings state
-    setBuildings(prev => prev.map(b =>
-      b.building_type === building.type
-        ? { ...b, is_upgrading: true, upgrade_complete_at: completeAt }
-        : b
-    ))
-
-    // Complete after timer
-    setTimeout(async () => {
-      const { data: updated } = await supabase
-        .from('buildings')
-        .select('*')
-        .eq('planet_id', planet.id)
-        .eq('building_type', building.type)
-        .single()
-
-      if (updated) {
-        await supabase.from('buildings').update({
-          level: updated.level + 1,
-          is_upgrading: false,
-          upgrade_complete_at: null,
-        }).eq('planet_id', planet.id).eq('building_type', building.type)
-
-        setBuildings(prev => prev.map(b =>
-          b.building_type === building.type
-            ? { ...b, level: updated.level + 1, is_upgrading: false, upgrade_complete_at: null }
-            : b
-        ))
-      }
+      setBuildings(prev => prev.map(b =>
+        b.building_type === building.type
+          ? { ...b, is_upgrading: true, upgrade_complete_at: completeAt }
+          : b
+      ))
+    } catch (err) {
+      console.error('Upgrade failed:', err)
+      alert(`Couldn't start the upgrade: ${err.message ?? 'unknown error'}. Reload to refresh state.`)
+      // Refund the optimistic deduct so the resource bar isn't a lie
+      setResources(prev => ({
+        ...prev,
+        metal:     prev.metal + cost.metal,
+        crystal:   prev.crystal + cost.crystal,
+        deuterium: prev.deuterium + (cost.deuterium ?? 0),
+      }))
       setUpgrading(false)
+      return
+    }
+
+    // Complete after timer (also caught by the on-mount/2s completer for missed timeouts)
+    setTimeout(async () => {
+      try {
+        const { data: updated } = await supabase
+          .from('buildings')
+          .select('*')
+          .eq('planet_id', planet.id)
+          .eq('building_type', building.type)
+          .single()
+
+        if (updated) {
+          await supabase.from('buildings').update({
+            level: updated.level + 1,
+            is_upgrading: false,
+            upgrade_complete_at: null,
+          }).eq('planet_id', planet.id).eq('building_type', building.type)
+
+          setBuildings(prev => prev.map(b =>
+            b.building_type === building.type
+              ? { ...b, level: updated.level + 1, is_upgrading: false, upgrade_complete_at: null }
+              : b
+          ))
+        }
+      } catch (err) {
+        console.error('Upgrade completion failed:', err)
+        // The 2s interval completer (TICK.COMPLETION_POLL_MS) will retry.
+      } finally {
+        setUpgrading(false)
+      }
     }, buildTime * 1000)
   }
 

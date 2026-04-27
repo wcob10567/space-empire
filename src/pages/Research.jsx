@@ -424,57 +424,82 @@ export default function Research({ planet, planets, resources, buildings, resear
     const completeAt = new Date(Date.now() + researchTime * 1000).toISOString()
     const isActivePlanet = targetPlanet.id === planet?.id
 
-    if (isActivePlanet) {
-      setResources(prev => prev ? ({
-        ...prev,
-        metal:     prev.metal - cost.metal,
-        crystal:   prev.crystal - cost.crystal,
-        deuterium: prev.deuterium - (cost.deuterium ?? 0),
-      }) : prev)
-    }
-
-    const existing = research?.find(r => r.tech_type === tech.type)
-    if (existing) {
-      await supabase.from('research').update({
-        is_researching: true,
-        research_complete_at: completeAt,
-      }).eq('id', existing.id)
-    } else {
-      await supabase.from('research').insert({
-        owner_id: targetPlanet.owner_id,
-        tech_type: tech.type,
-        level: 0,
-        is_researching: true,
-        research_complete_at: completeAt,
-      })
-    }
-
-    await debitResources(targetPlanet.id, targetResources, cost)
-
-    setResearch(prev => {
-      const exists = prev?.find(r => r.tech_type === tech.type)
-      if (exists) {
-        return prev.map(r => r.tech_type === tech.type
-          ? { ...r, is_researching: true, research_complete_at: completeAt }
-          : r
-        )
+    try {
+      if (isActivePlanet) {
+        setResources(prev => prev ? ({
+          ...prev,
+          metal:     prev.metal - cost.metal,
+          crystal:   prev.crystal - cost.crystal,
+          deuterium: prev.deuterium - (cost.deuterium ?? 0),
+        }) : prev)
       }
-      return [...(prev ?? []), { tech_type: tech.type, level: 0, is_researching: true, research_complete_at: completeAt }]
-    })
 
-    setTimeout(async () => {
-      const currentLvl = researchMap[tech.type] ?? 0
-      await supabase.from('research').update({
-        level: currentLvl + 1,
-        is_researching: false,
-        research_complete_at: null,
-      }).eq('owner_id', targetPlanet.owner_id).eq('tech_type', tech.type)
+      const existing = research?.find(r => r.tech_type === tech.type)
+      if (existing) {
+        const { error } = await supabase.from('research').update({
+          is_researching: true,
+          research_complete_at: completeAt,
+        }).eq('id', existing.id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('research').insert({
+          owner_id: targetPlanet.owner_id,
+          tech_type: tech.type,
+          level: 0,
+          is_researching: true,
+          research_complete_at: completeAt,
+        })
+        if (error) throw error
+      }
 
-      setResearch(prev => prev.map(r => r.tech_type === tech.type
-        ? { ...r, level: r.level + 1, is_researching: false, research_complete_at: null }
-        : r
-      ))
+      await debitResources(targetPlanet.id, targetResources, cost)
+
+      setResearch(prev => {
+        const exists = prev?.find(r => r.tech_type === tech.type)
+        if (exists) {
+          return prev.map(r => r.tech_type === tech.type
+            ? { ...r, is_researching: true, research_complete_at: completeAt }
+            : r
+          )
+        }
+        return [...(prev ?? []), { tech_type: tech.type, level: 0, is_researching: true, research_complete_at: completeAt }]
+      })
+    } catch (err) {
+      console.error('Research dispatch failed:', err)
+      alert(`Couldn't start research: ${err.message ?? 'unknown error'}. Reload to refresh state.`)
+      // Refund the optimistic deduct on the active planet (other planets weren't optimistically updated)
+      if (isActivePlanet) {
+        setResources(prev => prev ? ({
+          ...prev,
+          metal:     prev.metal + cost.metal,
+          crystal:   prev.crystal + cost.crystal,
+          deuterium: prev.deuterium + (cost.deuterium ?? 0),
+        }) : prev)
+      }
       setResearching(false)
+      return
+    }
+
+    // Complete after timer (the 2s interval completer also catches this if the timeout misfires)
+    setTimeout(async () => {
+      try {
+        const currentLvl = researchMap[tech.type] ?? 0
+        await supabase.from('research').update({
+          level: currentLvl + 1,
+          is_researching: false,
+          research_complete_at: null,
+        }).eq('owner_id', targetPlanet.owner_id).eq('tech_type', tech.type)
+
+        setResearch(prev => prev.map(r => r.tech_type === tech.type
+          ? { ...r, level: r.level + 1, is_researching: false, research_complete_at: null }
+          : r
+        ))
+      } catch (err) {
+        console.error('Research completion failed:', err)
+        // The 2s interval completer will retry.
+      } finally {
+        setResearching(false)
+      }
     }, researchTime * 1000)
   }
 

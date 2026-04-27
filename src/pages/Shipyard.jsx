@@ -208,40 +208,55 @@ export default function Shipyard({ planet, resources, buildings, research, ships
     const buildTime = getBuildTime(item.cost, shipyardLvl, naniteLvl) * qty
     const completeAt = new Date(Date.now() + buildTime * 1000).toISOString()
 
-    // Deduct resources locally
-    setResources(prev => ({
-      ...prev,
-      metal:     prev.metal - cost.metal,
-      crystal:   prev.crystal - cost.crystal,
-      deuterium: prev.deuterium - cost.deuterium,
-    }))
+    try {
+      setResources(prev => ({
+        ...prev,
+        metal:     prev.metal - cost.metal,
+        crystal:   prev.crystal - cost.crystal,
+        deuterium: prev.deuterium - cost.deuterium,
+      }))
 
-    // Deduct resources in DB
-    await debitResources(planet.id, resources, cost)
+      await debitResources(planet.id, resources, cost)
 
-    // Set build queue locally
-    setBuildQueue(prev => ({ ...prev, [item.type]: { qty, completeAt } }))
+      // Build queue is local-only state; lost on reload (known limitation, see DevPanel comment).
+      setBuildQueue(prev => ({ ...prev, [item.type]: { qty, completeAt } }))
+    } catch (err) {
+      console.error('Build dispatch failed:', err)
+      alert(`Couldn't start build: ${err.message ?? 'unknown error'}. Reload to refresh state.`)
+      setResources(prev => ({
+        ...prev,
+        metal:     prev.metal + cost.metal,
+        crystal:   prev.crystal + cost.crystal,
+        deuterium: prev.deuterium + cost.deuterium,
+      }))
+      return
+    }
 
-    // Complete after timer
+    // Complete after timer (no on-mount completer for shipyard yet — TODO)
     setTimeout(async () => {
-      const existing = ships?.find(s => s.ship_type === item.type)
-      if (existing) {
-        await supabase.from('ships').update({
-          quantity: existing.quantity + qty,
-        }).eq('planet_id', planet.id).eq('ship_type', item.type)
-        setShips(prev => prev.map(s => s.ship_type === item.type
-          ? { ...s, quantity: s.quantity + qty }
-          : s
-        ))
-      } else {
-        await supabase.from('ships').insert({
-          planet_id: planet.id,
-          ship_type: item.type,
-          quantity: qty,
-        })
-        setShips(prev => [...(prev ?? []), { ship_type: item.type, quantity: qty }])
+      try {
+        const existing = ships?.find(s => s.ship_type === item.type)
+        if (existing) {
+          await supabase.from('ships').update({
+            quantity: existing.quantity + qty,
+          }).eq('planet_id', planet.id).eq('ship_type', item.type)
+          setShips(prev => prev.map(s => s.ship_type === item.type
+            ? { ...s, quantity: s.quantity + qty }
+            : s
+          ))
+        } else {
+          await supabase.from('ships').insert({
+            planet_id: planet.id,
+            ship_type: item.type,
+            quantity: qty,
+          })
+          setShips(prev => [...(prev ?? []), { ship_type: item.type, quantity: qty }])
+        }
+      } catch (err) {
+        console.error('Build completion failed:', err)
+      } finally {
+        setBuildQueue(prev => { const n = { ...prev }; delete n[item.type]; return n })
       }
-      setBuildQueue(prev => { const n = { ...prev }; delete n[item.type]; return n })
     }, buildTime * 1000)
   }
 
