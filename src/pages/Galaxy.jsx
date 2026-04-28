@@ -772,6 +772,14 @@ export default function Galaxy({ planet: myPlanet }) {
   const [selectedSystem, setSelectedSystem] = useState(null)
   const [occupiedSystems, setOccupiedSystems] = useState({})
 
+  // When the active planet changes (sidebar switcher), jump the galaxy view
+  // to that planet's coords. Clears any previously-selected system.
+  useEffect(() => {
+    if (!myPlanet?.id) return
+    setGalaxy(myPlanet.galaxy ?? 1)
+    setSelectedSystem(null)
+  }, [myPlanet?.id, myPlanet?.galaxy])
+
   useEffect(() => {
     async function load() {
       const { data } = await supabase
