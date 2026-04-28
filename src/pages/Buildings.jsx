@@ -1,37 +1,23 @@
-import { useState, useEffect } from 'react'
-import { supabase } from '../lib/supabase'
-import { Building2, Clock, ChevronUp, Zap, X, ListOrdered, Lock, Coins } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import { Building2, Clock, ChevronUp, Zap } from 'lucide-react'
 import { BUILDINGS, BUILDING_CATEGORIES as CATEGORIES, BUILDING_BY_TYPE } from '../data/buildings'
-import { TICK } from '../config/tick'
 import { addToBuildingQueue, cancelBuildingQueue } from '../services/buildQueue'
+import { completeBuildingUpgrade } from '../services/completion'
+import { useCompletionPoll } from '../hooks/useCompletionPoll'
 import { BUILDING_SLOT_TIERS, countEarnedFreeSlots } from '../data/queueSlots'
+import { formatTime } from '../utils/format'
+import { scaleCost, computeDuration } from '../utils/formulas'
+import QueuePanel from '../components/QueuePanel'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-function getUpgradeCost(building, currentLevel) {
-  const mult = Math.pow(1.5, currentLevel)
-  return {
-    metal:     Math.floor((building.baseCost.metal     ?? 0) * mult),
-    crystal:   Math.floor((building.baseCost.crystal   ?? 0) * mult),
-    deuterium: Math.floor((building.baseCost.deuterium ?? 0) * mult),
-  }
-}
+const getUpgradeCost = (building, currentLevel) => scaleCost(building.baseCost, 1.5, currentLevel)
 
-function getBuildTime(cost, roboticsLvl) {
-  const base = (cost.metal + cost.crystal) / 2500
-  const roboFactor = Math.max(1, 1 + roboticsLvl)
-  const speed = import.meta.env.DEV ? (window.__devSpeed ?? 1) : 1
-  return Math.max(1, Math.floor(base / roboFactor * 3600 * speed))
-}
-
-function formatTime(seconds) {
-  if (seconds <= 0) return 'Complete!'
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  const s = seconds % 60
-  if (h > 0) return `${h}h ${m}m ${s}s`
-  if (m > 0) return `${m}m ${s}s`
-  return `${s}s`
-}
+const getBuildTime = (cost, roboticsLvl) => computeDuration({
+  cost,
+  divisor: 2500,
+  factor: 1 + roboticsLvl,
+  applyDevSpeed: true,
+})
 
 function canAfford(cost, available) {
   return (
@@ -40,10 +26,6 @@ function canAfford(cost, available) {
     (available?.deuterium ?? 0) >= (cost.deuterium ?? 0)
   )
 }
-
-// Slot count is computed from BUILDING_SLOT_TIERS in src/data/queueSlots.js.
-// The single source of truth lives there so the SlotProgress panel below and
-// the slotsFull gate stay in lockstep.
 
 // ─── Building Card ────────────────────────────────────────────────────────────
 function BuildingCard({
@@ -173,93 +155,6 @@ function BuildingCard({
   )
 }
 
-// ─── Slot progression panel ─────────────────────────────────────────────────
-// Always visible so the player can see how the slot system works. Earned tiers
-// are checked off; un-earned tiers show what they need; paid tiers show a
-// disabled "Buy with Rush Tokens" button until that economy lands.
-function SlotProgress({ tiers, levels, slotsUsed }) {
-  return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-      <div className="flex items-center gap-2 mb-2">
-        <Building2 size={14} className="text-cyan-400" />
-        <span className="text-xs font-semibold text-cyan-400 uppercase tracking-wide">Build queue slots</span>
-        <span className="text-xs text-gray-500 ml-auto">{slotsUsed} in use</span>
-      </div>
-      <div className="space-y-1">
-        {tiers.map(t => {
-          const earned = !t.paid && t.check?.(levels)
-          return (
-            <div key={t.slot} className={`flex items-center gap-2 text-xs px-2 py-1 rounded ${
-              earned ? 'text-gray-300' :
-              t.paid ? 'text-gray-500'  :
-                       'text-gray-500'
-            }`}>
-              <span className="font-mono w-5 text-right">#{t.slot}</span>
-              {earned ? (
-                <span className="text-green-400">✓</span>
-              ) : t.paid ? (
-                <Coins size={12} className="text-yellow-500" />
-              ) : (
-                <Lock size={12} className="text-gray-600" />
-              )}
-              <span className="flex-1 truncate">{t.requirement}</span>
-              {t.paid && (
-                <button
-                  disabled
-                  title="Rush Tokens economy isn't built yet"
-                  className="px-2 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-500 text-xs cursor-not-allowed"
-                >
-                  Buy (soon)
-                </button>
-              )}
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-// ─── Queue list ──────────────────────────────────────────────────────────────
-function BuildingQueueList({ queue, onCancel, submitting }) {
-  if (!queue?.length) return null
-  return (
-    <div className="bg-gray-900 border border-yellow-900/40 rounded-xl p-4 space-y-2">
-      <div className="flex items-center gap-2 mb-1">
-        <ListOrdered size={14} className="text-yellow-500" />
-        <span className="text-xs font-semibold text-yellow-500 uppercase tracking-wide">Build queue</span>
-        <span className="text-xs text-gray-500">{queue.length} waiting</span>
-      </div>
-      <div className="space-y-1.5">
-        {queue.map((q, i) => {
-          const meta = BUILDING_BY_TYPE[q.building_type]
-          return (
-            <div key={q.id} className="flex items-center gap-3 bg-gray-800/60 rounded-lg px-3 py-2 text-xs">
-              <span className="text-gray-500 font-mono w-5 text-right">#{i + 1}</span>
-              <span className="text-base">{meta?.icon ?? '🏗️'}</span>
-              <span className="text-white flex-1 truncate">
-                {meta?.name ?? q.building_type} <span className="text-gray-500">·</span> {formatTime(q.build_seconds)}
-              </span>
-              <span className="text-gray-500 hidden sm:inline">
-                ⛏️ {q.cost_metal.toLocaleString()} 💎 {q.cost_crystal.toLocaleString()}
-                {q.cost_deuterium > 0 && <> 🔵 {q.cost_deuterium.toLocaleString()}</>}
-              </span>
-              <button
-                onClick={() => onCancel(q.id)}
-                disabled={submitting}
-                className="text-gray-500 hover:text-red-400 disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Cancel — refunds the reservation"
-              >
-                <X size={14} />
-              </button>
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
 // ─── Main Buildings Page ──────────────────────────────────────────────────────
 export default function Buildings({
   planet, resources, buildings, setBuildings,
@@ -292,38 +187,19 @@ export default function Buildings({
     return baseLvl + (isUpgradingThis ? 1 : 0) + queuedCountThis
   }
 
-  // Catch any upgrade whose timer expired — runs on mount AND every 2s while on the page,
-  // so a missed setTimeout / dev-speed change doesn't leave a build stuck.
-  useEffect(() => {
-    if (!planet) return
-    let cancelled = false
-    async function checkCompleted() {
-      if (cancelled || !buildings?.length) return
-      const now = new Date()
-      const completed = buildings.filter(
-        b => b.is_upgrading && b.upgrade_complete_at && new Date(b.upgrade_complete_at) <= now
-      )
-      for (const b of completed) {
-        if (cancelled) return
-        const { error } = await supabase.from('buildings').update({
-          level: b.level + 1,
-          is_upgrading: false,
-          upgrade_complete_at: null,
-        })
-          .eq('id', b.id)
-          .eq('is_upgrading', true)
-        if (error) continue
-        setBuildings(prev => prev.map(pb =>
-          pb.id === b.id && pb.is_upgrading
-            ? { ...pb, level: pb.level + 1, is_upgrading: false, upgrade_complete_at: null }
-            : pb
-        ))
-      }
-    }
-    checkCompleted()
-    const interval = setInterval(checkCompleted, TICK.COMPLETION_POLL_MS)
-    return () => { cancelled = true; clearInterval(interval) }
-  }, [planet, buildings, setBuildings])
+  // Catch any upgrade whose timer expired — generic 2s poll guards against
+  // missed setTimeouts / dev-speed changes / page reloads.
+  const completeBuilding = useCallback(
+    (id, level) => completeBuildingUpgrade(id, level),
+    []
+  )
+  useCompletionPoll({
+    items: buildings,
+    setItems: setBuildings,
+    flagKey: 'is_upgrading',
+    completeAtKey: 'upgrade_complete_at',
+    complete: completeBuilding,
+  })
 
   // Add to queue. The server-side process_building_queue() picks up the head
   // on the next 3s tick, deducts from balance, and starts the upgrade.
@@ -331,7 +207,6 @@ export default function Buildings({
     if (!planet || submitting) return
     if (slotsFull) return
 
-    const currentLvl = effectiveCurrentLevel(building.type)
     const buildSeconds = getBuildTime(cost, roboticsLvl)
 
     setSubmitting(true)
@@ -339,7 +214,6 @@ export default function Buildings({
       const row = await addToBuildingQueue({
         planetId: planet.id,
         buildingType: building.type,
-        position: queueLen,
         cost,
         buildSeconds,
       })
@@ -351,10 +225,6 @@ export default function Buildings({
     } finally {
       setSubmitting(false)
     }
-
-    // currentLvl is unused here but exists for parity with how cost is computed —
-    // keeping it explicit in case we later want to send it to the server for validation.
-    void currentLvl
   }
 
   async function handleCancel(queueRowId) {
@@ -377,9 +247,6 @@ export default function Buildings({
       <div className="flex items-center gap-3 flex-wrap">
         <Building2 size={20} className="text-cyan-400" />
         <h2 className="text-xl font-bold text-white">Buildings</h2>
-        <span className="text-xs text-gray-500">
-          Slots {slotsUsed} / {maxSlots}
-        </span>
         {anyUpgrading && (
           <span className="text-xs bg-cyan-900/50 border border-cyan-700 text-cyan-400 px-2 py-1 rounded-full">
             1 upgrading
@@ -392,14 +259,38 @@ export default function Buildings({
         )}
       </div>
 
-      {/* Queue list (only the *waiting* items — the active upgrade shows on its own card) */}
-      <BuildingQueueList queue={buildingQueue} onCancel={handleCancel} submitting={submitting} />
-
-      {/* Slot progression — always visible so the player learns the system */}
-      <SlotProgress
-        tiers={BUILDING_SLOT_TIERS}
-        levels={{ robotics: roboticsLvl }}
-        slotsUsed={slotsUsed}
+      {/* Combined queue + slot panel: in-flight upgrade at the top, queued items
+          underneath, then slot progression. Cancel is per-row on queued items. */}
+      <QueuePanel
+        title="Build queue"
+        inFlight={(() => {
+          const upgrading = buildings?.find(b => b.is_upgrading)
+          if (!upgrading) return null
+          const meta = BUILDING_BY_TYPE[upgrading.building_type]
+          return {
+            icon: meta?.icon ?? '🏗️',
+            label: `${meta?.name ?? upgrading.building_type} → Lv. ${upgrading.level + 1}`,
+            completeAt: upgrading.upgrade_complete_at,
+          }
+        })()}
+        queue={buildingQueue?.map(q => {
+          const meta = BUILDING_BY_TYPE[q.building_type]
+          return {
+            id: q.id,
+            icon: meta?.icon ?? '🏗️',
+            label: meta?.name ?? q.building_type,
+            duration: q.build_seconds,
+            cost: { metal: q.cost_metal, crystal: q.cost_crystal, deuterium: q.cost_deuterium },
+          }
+        })}
+        slotInfo={{
+          tiers: BUILDING_SLOT_TIERS,
+          levels: { robotics: roboticsLvl },
+          boughtSlots: 0,
+          used: slotsUsed,
+        }}
+        onCancel={handleCancel}
+        submitting={submitting}
       />
 
       {/* Building categories */}

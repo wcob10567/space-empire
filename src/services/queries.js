@@ -31,4 +31,14 @@ export const queries = {
   buildingQueue: (planetId) => supabase.from('building_queue').select('*')
     .eq('planet_id', planetId)
     .order('position', { ascending: true }),
+
+  // Ship queue (per planet, ordered)
+  shipQueue: (planetId) => supabase.from('ship_queue').select('*')
+    .eq('planet_id', planetId)
+    .order('position', { ascending: true }),
+
+  // Research queue (account-wide, ordered)
+  researchQueue: (ownerId) => supabase.from('research_queue').select('*')
+    .eq('owner_id', ownerId)
+    .order('position', { ascending: true }),
 }

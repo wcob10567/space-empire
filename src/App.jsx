@@ -15,6 +15,8 @@ import Reports from './pages/Reports'
 import { TICK } from './config/tick'
 import { queries } from './services/queries'
 import { sumReservation } from './services/buildQueue'
+import { sumShipReservation } from './services/shipQueue'
+import { sumResearchReservationByPlanet } from './services/researchQueue'
 
 const ACTIVE_PLANET_KEY = 'space-empire-active-planet'
 
@@ -45,13 +47,26 @@ function Game() {
   const [research, setResearch] = useState([])
   const [ships, setShips] = useState([])
   const [buildingQueue, setBuildingQueue] = useState([])
+  const [shipQueue, setShipQueue] = useState([])
+  const [researchQueue, setResearchQueue] = useState([])
 
   const planet = planets.find(p => p.id === activePlanetId) ?? planets[0] ?? null
 
-  // Reservation = sum of queued costs for the active planet. Reduces what's
-  // spendable but does NOT reduce balance (resources stay plunderable until
-  // a queued build actually starts).
-  const reservation = useMemo(() => sumReservation(buildingQueue), [buildingQueue])
+  // Reservation = sum of queued costs for the active planet across all 3
+  // queues. Reduces what's spendable but does NOT reduce balance (resources
+  // stay plunderable until a queued build actually starts).
+  // Research queue is account-wide but reservation is per-source-planet.
+  const reservation = useMemo(() => {
+    const buildRes = sumReservation(buildingQueue)
+    const shipRes  = sumShipReservation(shipQueue)
+    const resByPlanet = sumResearchReservationByPlanet(researchQueue)
+    const researchRes = planet?.id ? (resByPlanet[planet.id] ?? { metal: 0, crystal: 0, deuterium: 0 }) : { metal: 0, crystal: 0, deuterium: 0 }
+    return {
+      metal:     buildRes.metal     + shipRes.metal     + researchRes.metal,
+      crystal:   buildRes.crystal   + shipRes.crystal   + researchRes.crystal,
+      deuterium: buildRes.deuterium + shipRes.deuterium + researchRes.deuterium,
+    }
+  }, [buildingQueue, shipQueue, researchQueue, planet?.id])
 
   const setActivePlanetId = useCallback((id) => {
     setActivePlanetIdState(id)
@@ -75,7 +90,7 @@ function Game() {
     if (!valid) setActivePlanetId(planets[0].id)
   }, [planets, activePlanetId, setActivePlanetId])
 
-  // Load planets list + research (per-user, doesn't depend on active planet)
+  // Load planets list + research + research_queue (per-user, doesn't depend on active planet)
   useEffect(() => {
     if (!user) return
     async function loadUserData() {
@@ -86,6 +101,9 @@ function Game() {
 
       const { data: researchData } = await queries.researchForUser(user.id)
       if (researchData) setResearch(researchData)
+
+      const { data: rqData } = await queries.researchQueue(user.id)
+      if (rqData) setResearchQueue(rqData)
     }
     loadUserData()
   }, [user])
@@ -97,22 +115,26 @@ function Game() {
     setBuildings([])
     setShips([])
     setBuildingQueue([])
+    setShipQueue([])
     async function loadPlanetData() {
       const [
         { data: resData },
         { data: bldData },
         { data: shipData },
-        { data: queueData },
+        { data: bqData },
+        { data: sqData },
       ] = await Promise.all([
         queries.resources(planet.id),
         queries.buildings(planet.id),
         queries.ships(planet.id),
         queries.buildingQueue(planet.id),
+        queries.shipQueue(planet.id),
       ])
-      if (resData)   setResources(resData)
-      if (bldData)   setBuildings(bldData)
-      if (shipData)  setShips(shipData)
-      if (queueData) setBuildingQueue(queueData)
+      if (resData)  setResources(resData)
+      if (bldData)  setBuildings(bldData)
+      if (shipData) setShips(shipData)
+      if (bqData)   setBuildingQueue(bqData)
+      if (sqData)   setShipQueue(sqData)
     }
     loadPlanetData()
   }, [planet?.id])
@@ -137,24 +159,29 @@ function Game() {
     return () => clearInterval(interval)
   }, [resources, buildings, getProduction])
 
-  // Fleet tick: process arrivals, advance building queues, refresh planet list
-  // (catches new colonies), refresh ships for the active planet
+  // Fleet tick: process arrivals, advance building/ship/research queues,
+  // refresh planet list (catches new colonies), refresh ships for active planet
   useEffect(() => {
     if (!user) return
     async function tick() {
       // Server-side processors. Fleets first (plunder/transport may free up
-      // resources that the queue then deducts on the same tick).
-      const [, { data: queueStarted }] = await Promise.all([
+      // resources that the queues then deduct on the same tick).
+      const [
+        ,
+        { data: bqStarted },
+        { data: sqEvents },
+        { data: rqStarted },
+      ] = await Promise.all([
         supabase.rpc('process_arrived_fleets'),
         supabase.rpc('process_building_queue'),
+        supabase.rpc('process_ship_queue'),
+        supabase.rpc('process_research_queue'),
       ])
 
-      // For each queue start on the active planet, apply the same deduction +
-      // mark is_upgrading locally so the UI stays in sync without a full refetch
-      // (refetching resources would clobber the local production tick).
-      if (Array.isArray(queueStarted) && queueStarted.length > 0 && planet?.id) {
+      // ── building queue starts ───────────────────────────────────────────
+      if (Array.isArray(bqStarted) && bqStarted.length > 0 && planet?.id) {
         let activePlanetHadStart = false
-        for (const ev of queueStarted) {
+        for (const ev of bqStarted) {
           if (ev.planet_id !== planet.id) continue
           activePlanetHadStart = true
           setResources(prev => prev ? ({
@@ -169,13 +196,68 @@ function Game() {
               : b
           ))
         }
-        // Refetch queue once if anything started on the active planet — the
-        // started rows have been deleted server-side and positions may have
-        // shifted; cheaper than tracking individual deletions in local state.
         if (activePlanetHadStart) {
           const { data: q } = await queries.buildingQueue(planet.id)
           if (q) setBuildingQueue(q)
         }
+      }
+
+      // ── ship queue events ('started' = full cost deducted, 'completed' = ships popped) ──
+      if (Array.isArray(sqEvents) && sqEvents.length > 0 && planet?.id) {
+        let activePlanetHadEvent = false
+        for (const ev of sqEvents) {
+          if (ev.planet_id !== planet.id) continue
+          activePlanetHadEvent = true
+          if (ev.type === 'started') {
+            setResources(prev => prev ? ({
+              ...prev,
+              metal:     prev.metal     - (ev.metal     ?? 0),
+              crystal:   prev.crystal   - (ev.crystal   ?? 0),
+              deuterium: prev.deuterium - (ev.deuterium ?? 0),
+            }) : prev)
+          } else if (ev.type === 'completed') {
+            setShips(prev => {
+              const exists = prev?.find(s => s.ship_type === ev.ship_type)
+              if (exists) {
+                return prev.map(s => s.ship_type === ev.ship_type
+                  ? { ...s, quantity: s.quantity + (ev.delta ?? 0) }
+                  : s
+                )
+              }
+              return [...(prev ?? []), { ship_type: ev.ship_type, quantity: ev.delta ?? 0 }]
+            })
+          }
+        }
+        if (activePlanetHadEvent) {
+          const { data: q } = await queries.shipQueue(planet.id)
+          if (q) setShipQueue(q)
+        }
+      }
+
+      // ── research queue starts (account-wide) ────────────────────────────
+      if (Array.isArray(rqStarted) && rqStarted.length > 0) {
+        for (const ev of rqStarted) {
+          if (ev.source_planet_id === planet?.id) {
+            setResources(prev => prev ? ({
+              ...prev,
+              metal:     prev.metal     - (ev.metal     ?? 0),
+              crystal:   prev.crystal   - (ev.crystal   ?? 0),
+              deuterium: prev.deuterium - (ev.deuterium ?? 0),
+            }) : prev)
+          }
+          setResearch(prev => {
+            const exists = prev?.find(r => r.tech_type === ev.tech_type)
+            if (exists) {
+              return prev.map(r => r.tech_type === ev.tech_type
+                ? { ...r, is_researching: true, research_complete_at: ev.complete_at }
+                : r
+              )
+            }
+            return [...(prev ?? []), { tech_type: ev.tech_type, level: 0, is_researching: true, research_complete_at: ev.complete_at }]
+          })
+        }
+        const { data: q } = await queries.researchQueue(user.id)
+        if (q) setResearchQueue(q)
       }
 
       const { data: planetData } = await queries.planetsForUser(user.id)
@@ -222,9 +304,9 @@ function Game() {
       case 'buildings':
         return <Buildings planet={planet} resources={resources} buildings={buildings} setBuildings={setBuildings} buildingQueue={buildingQueue} setBuildingQueue={setBuildingQueue} reservation={reservation} />
       case 'research':
-        return <Research planet={planet} planets={planets} resources={resources} buildings={buildings} research={research} setResearch={setResearch} setResources={setResources} />
+        return <Research planet={planet} planets={planets} resources={resources} buildings={buildings} research={research} setResearch={setResearch} setResources={setResources} researchQueue={researchQueue} setResearchQueue={setResearchQueue} reservation={reservation} />
       case 'shipyard':
-        return <Shipyard planet={planet} resources={resources} buildings={buildings} research={research} ships={ships} setShips={setShips} setResources={setResources} />
+        return <Shipyard planet={planet} resources={resources} buildings={buildings} research={research} ships={ships} setShips={setShips} setResources={setResources} shipQueue={shipQueue} setShipQueue={setShipQueue} reservation={reservation} />
       case 'galaxy':
         return <Galaxy planet={planet} />
       case 'fleet':

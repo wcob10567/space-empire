@@ -10,16 +10,30 @@ import { supabase } from '../lib/supabase'
 /**
  * Insert a new queue row at the next position for this planet.
  *
+ * Position is computed as max(existing position) + 1 from the DB. This avoids
+ * a stale-local-state race AND the gap left when process_building_queue()
+ * deletes a head row without compacting the rest (which used to violate the
+ * unique (planet_id, position) index when the local queueLen lined up with
+ * an existing row's position).
+ *
  * @param {{
  *   planetId: string,
  *   buildingType: string,
- *   position: number,            // computed by caller (queue.length is the next slot)
  *   cost: { metal:number, crystal:number, deuterium:number },
  *   buildSeconds: number,        // snapshotted at queue time
  * }} args
  * @returns {Promise<object>} the inserted row
  */
-export async function addToBuildingQueue({ planetId, buildingType, position, cost, buildSeconds }) {
+export async function addToBuildingQueue({ planetId, buildingType, cost, buildSeconds }) {
+  const { data: existing, error: qErr } = await supabase
+    .from('building_queue')
+    .select('position')
+    .eq('planet_id', planetId)
+    .order('position', { ascending: false })
+    .limit(1)
+  if (qErr) throw qErr
+  const position = (existing?.[0]?.position ?? -1) + 1
+
   const { data, error } = await supabase.from('building_queue').insert({
     planet_id:      planetId,
     building_type:  buildingType,
