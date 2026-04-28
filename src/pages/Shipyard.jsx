@@ -1,33 +1,24 @@
-import { useState, useEffect } from 'react'
-import { supabase } from '../lib/supabase'
-import { Rocket, Lock, AlertTriangle, Clock, Plus, Minus } from 'lucide-react'
-import { SHIPS, DEFENSES, SHIPYARD_CATEGORIES as CATEGORIES } from '../data/ships'
-import { debitResources } from '../services/resources'
+import { useState } from 'react'
+import { Rocket, Lock, AlertTriangle, Plus, Minus } from 'lucide-react'
+import { SHIPS, DEFENSES, SHIPYARD_CATEGORIES as CATEGORIES, SHIP_BY_TYPE, DEFENSE_BY_TYPE } from '../data/ships'
+import { addToShipQueue, cancelShipQueue } from '../services/shipQueue'
+import { SHIP_SLOT_TIERS, countEarnedFreeSlots } from '../data/queueSlots'
+import { formatTime } from '../utils/format'
+import { computeDuration } from '../utils/formulas'
+import QueuePanel from '../components/QueuePanel'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-function getBuildTime(cost, shipyardLvl, naniteLvl) {
-  const base = (cost.metal + cost.crystal) / 2500
-  const factor = Math.max(1, shipyardLvl) * Math.pow(2, naniteLvl ?? 0)
-  const speed = window.__devSpeed ?? 1
-  return Math.max(1, Math.floor(base / factor * 3600 * speed))
-}
+const getBuildTimePerShip = (cost, shipyardLvl, naniteLvl) => computeDuration({
+  cost,
+  divisor: 2500,
+  factor: Math.max(1, shipyardLvl) * Math.pow(2, naniteLvl ?? 0),
+  applyDevSpeed: true,
+})
 
-function formatTime(seconds) {
-  if (seconds <= 0) return 'Complete!'
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  const s = seconds % 60
-  if (h > 0) return `${h}h ${m}m ${s}s`
-  if (m > 0) return `${m}m ${s}s`
-  return `${s}s`
-}
-
-function getBlocker(item, researchMap, shipyardLvl, resources, qty) {
-  // Check shipyard level
+function getBlocker(item, researchMap, shipyardLvl, available, qty) {
   if (shipyardLvl < (item.requires.shipyard ?? 0)) {
     return { type: 'building', msg: `Need Shipyard Lv. ${item.requires.shipyard}` }
   }
-  // Check research prereqs
   for (const [reqType, reqLvl] of Object.entries(item.prereqs)) {
     const have = researchMap[reqType] ?? 0
     if (have < reqLvl) {
@@ -36,47 +27,39 @@ function getBlocker(item, researchMap, shipyardLvl, resources, qty) {
       return { type: 'research', msg: `Need ${name} Lv. ${reqLvl}` }
     }
   }
-  // Check resources
   const totalCost = {
     metal:     item.cost.metal * qty,
     crystal:   item.cost.crystal * qty,
     deuterium: (item.cost.deuterium ?? 0) * qty,
   }
   const missing = []
-  if (totalCost.metal > (resources?.metal ?? 0)) missing.push(`${(totalCost.metal - (resources?.metal ?? 0)).toLocaleString()} metal`)
-  if (totalCost.crystal > (resources?.crystal ?? 0)) missing.push(`${(totalCost.crystal - (resources?.crystal ?? 0)).toLocaleString()} crystal`)
-  if (totalCost.deuterium > (resources?.deuterium ?? 0)) missing.push(`${(totalCost.deuterium - (resources?.deuterium ?? 0)).toLocaleString()} deuterium`)
+  if (totalCost.metal     > (available?.metal     ?? 0)) missing.push(`${(totalCost.metal     - (available?.metal     ?? 0)).toLocaleString()} metal`)
+  if (totalCost.crystal   > (available?.crystal   ?? 0)) missing.push(`${(totalCost.crystal   - (available?.crystal   ?? 0)).toLocaleString()} crystal`)
+  if (totalCost.deuterium > (available?.deuterium ?? 0)) missing.push(`${(totalCost.deuterium - (available?.deuterium ?? 0)).toLocaleString()} deuterium`)
   if (missing.length > 0) return { type: 'resources', msg: `Need ${missing[0]} more` }
   return null
 }
 
+// Resolve an item's metadata from either ships or defenses
+function metaFor(type) {
+  return SHIP_BY_TYPE[type] ?? DEFENSE_BY_TYPE[type] ?? null
+}
+
 // ─── Item Card ────────────────────────────────────────────────────────────────
-function ItemCard({ item, quantity, resources, researchMap, shipyardLvl, naniteLvl, onBuild, building }) {
+function ItemCard({ item, quantity, available, researchMap, shipyardLvl, naniteLvl, onQueue, slotsFull, submitting }) {
   const [qty, setQty] = useState(1)
-  const [timeLeft, setTimeLeft] = useState(0)
-  const blocker = getBlocker(item, researchMap, shipyardLvl, resources, qty)
+  const blocker = getBlocker(item, researchMap, shipyardLvl, available, qty)
   const isLocked = blocker?.type === 'building' || blocker?.type === 'research'
   const isAlmostReady = blocker?.type === 'resources'
   const isAffordable = !blocker
-  const buildTime = getBuildTime(item.cost, shipyardLvl, naniteLvl)
-
-  useEffect(() => {
-    if (!building) return
-    const tick = () => {
-      const secs = Math.max(0, Math.floor((new Date(building.completeAt) - Date.now()) / 1000))
-      setTimeLeft(secs)
-    }
-    tick()
-    const interval = setInterval(tick, 1000)
-    return () => clearInterval(interval)
-  }, [building])
+  const buildTimePerShip = getBuildTimePerShip(item.cost, shipyardLvl, naniteLvl)
+  const buttonDisabled = !isAffordable || slotsFull || submitting
 
   return (
     <div className={`bg-gray-900 border rounded-xl p-4 transition-all ${
-      building    ? 'border-cyan-600' :
-      isLocked    ? 'border-gray-800 opacity-60' :
+      isLocked      ? 'border-gray-800 opacity-60' :
       isAlmostReady ? 'border-yellow-800' :
-      'border-gray-800 hover:border-gray-700'
+                      'border-gray-800 hover:border-gray-700'
     }`}>
       {/* Header */}
       <div className="flex items-start justify-between gap-2 mb-3">
@@ -106,41 +89,34 @@ function ItemCard({ item, quantity, resources, researchMap, shipyardLvl, naniteL
         {item.stats.cargo && <span>📦 {item.stats.cargo.toLocaleString()}</span>}
       </div>
 
-      {/* Building in progress */}
-      {building ? (
-        <div className="bg-cyan-950/50 border border-cyan-800 rounded-lg p-2 flex items-center gap-2">
-          <Clock size={14} className="text-cyan-400 animate-pulse" />
-          <span className="text-cyan-400 text-xs font-mono">{formatTime(timeLeft)}</span>
-          <span className="text-gray-500 text-xs ml-auto">Building x{building.qty}</span>
-        </div>
-      ) : isLocked ? (
+      {isLocked ? (
         <div className="flex items-center gap-2 bg-gray-800/50 rounded-lg p-2">
           <Lock size={12} className="text-gray-600 shrink-0" />
           <span className="text-gray-600 text-xs">{blocker?.msg}</span>
         </div>
       ) : (
         <div className="space-y-2">
-          {/* Cost */}
+          {/* Cost (red if insufficient `available`) */}
           <div className="flex flex-wrap gap-2 text-xs">
             {item.cost.metal > 0 && (
-              <span className={(item.cost.metal * qty) > (resources?.metal ?? 0) ? 'text-red-400' : 'text-gray-400'}>
+              <span className={(item.cost.metal * qty) > (available?.metal ?? 0) ? 'text-red-400' : 'text-gray-400'}>
                 ⛏️ {(item.cost.metal * qty).toLocaleString()}
               </span>
             )}
             {item.cost.crystal > 0 && (
-              <span className={(item.cost.crystal * qty) > (resources?.crystal ?? 0) ? 'text-red-400' : 'text-gray-400'}>
+              <span className={(item.cost.crystal * qty) > (available?.crystal ?? 0) ? 'text-red-400' : 'text-gray-400'}>
                 💎 {(item.cost.crystal * qty).toLocaleString()}
               </span>
             )}
             {item.cost.deuterium > 0 && (
-              <span className={(item.cost.deuterium * qty) > (resources?.deuterium ?? 0) ? 'text-red-400' : 'text-gray-400'}>
+              <span className={(item.cost.deuterium * qty) > (available?.deuterium ?? 0) ? 'text-red-400' : 'text-gray-400'}>
                 🔵 {(item.cost.deuterium * qty).toLocaleString()}
               </span>
             )}
-            <span className="text-gray-600 ml-auto">⏱ {formatTime(buildTime * qty)}</span>
+            <span className="text-gray-600 ml-auto">⏱ {formatTime(buildTimePerShip * qty)}</span>
           </div>
 
-          {/* Almost ready warning */}
+          {/* Almost-ready warning */}
           {isAlmostReady && (
             <div className="flex items-center gap-2 bg-yellow-900/20 border border-yellow-800/50 rounded-lg p-2">
               <AlertTriangle size={12} className="text-yellow-500 shrink-0" />
@@ -166,18 +142,23 @@ function ItemCard({ item, quantity, resources, researchMap, shipyardLvl, naniteL
             </button>
           </div>
 
-          {/* Build button */}
+          {/* Queue button (was "Build" — same flow now goes through ship_queue) */}
           <button
-            onClick={() => onBuild(item, qty)}
-            disabled={!isAffordable}
+            onClick={() => onQueue(item, qty, buildTimePerShip)}
+            disabled={buttonDisabled}
+            title={
+              slotsFull       ? 'Ship queue is full' :
+              !isAffordable   ? 'Not enough available resources (after pending reservations)' :
+              undefined
+            }
             className={`w-full flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-semibold transition-all ${
-              isAffordable
+              !buttonDisabled
                 ? 'bg-cyan-700 hover:bg-cyan-600 text-white'
                 : 'bg-gray-800 text-gray-600 cursor-not-allowed'
             }`}
           >
             <Rocket size={14} />
-            Build {qty > 1 ? `x${qty}` : ''}
+            Queue {qty > 1 ? `x${qty}` : ''}
           </button>
         </div>
       )}
@@ -186,11 +167,15 @@ function ItemCard({ item, quantity, resources, researchMap, shipyardLvl, naniteL
 }
 
 // ─── Main Shipyard Page ───────────────────────────────────────────────────────
-export default function Shipyard({ planet, resources, buildings, research, ships, setShips, setResources }) {
-  const [buildQueue, setBuildQueue] = useState({})
+export default function Shipyard({
+  planet, resources, buildings, research, ships,
+  shipQueue, setShipQueue, reservation,
+}) {
+  const [submitting, setSubmitting] = useState(false)
 
   const shipyardLvl = buildings?.find(b => b.building_type === 'shipyard')?.level ?? 0
   const naniteLvl   = buildings?.find(b => b.building_type === 'nanite_factory')?.level ?? 0
+  const roboticsLvl = buildings?.find(b => b.building_type === 'robotics_factory')?.level ?? 0
 
   const researchMap = {}
   research?.forEach(r => { researchMap[r.tech_type] = r.level })
@@ -198,82 +183,125 @@ export default function Shipyard({ planet, resources, buildings, research, ships
   const shipMap = {}
   ships?.forEach(s => { shipMap[s.ship_type] = s.quantity })
 
-  async function handleBuild(item, qty) {
-    if (!planet) return
+  // Slots: in-flight = the row that has started_at set (i.e. been pulled to head),
+  // queued = waiting rows with started_at null.
+  const inFlightRow = shipQueue?.find(q => q.started_at) ?? null
+  const queuedRows  = shipQueue?.filter(q => !q.started_at) ?? []
+  const maxSlots    = countEarnedFreeSlots(SHIP_SLOT_TIERS, { shipyard: shipyardLvl, robotics: roboticsLvl })
+  const slotsUsed   = (inFlightRow ? 1 : 0) + queuedRows.length
+  const slotsFull   = slotsUsed >= maxSlots
+
+  const available = {
+    metal:     (resources?.metal     ?? 0) - (reservation?.metal     ?? 0),
+    crystal:   (resources?.crystal   ?? 0) - (reservation?.crystal   ?? 0),
+    deuterium: (resources?.deuterium ?? 0) - (reservation?.deuterium ?? 0),
+  }
+
+  async function handleQueue(item, qty, buildSecondsPerShip) {
+    if (!planet || submitting) return
+    if (slotsFull) return
+
     const cost = {
       metal:     item.cost.metal * qty,
       crystal:   item.cost.crystal * qty,
       deuterium: (item.cost.deuterium ?? 0) * qty,
     }
-    const buildTime = getBuildTime(item.cost, shipyardLvl, naniteLvl) * qty
-    const completeAt = new Date(Date.now() + buildTime * 1000).toISOString()
 
+    setSubmitting(true)
     try {
-      setResources(prev => ({
-        ...prev,
-        metal:     prev.metal - cost.metal,
-        crystal:   prev.crystal - cost.crystal,
-        deuterium: prev.deuterium - cost.deuterium,
-      }))
-
-      await debitResources(planet.id, resources, cost)
-
-      // Build queue is local-only state; lost on reload (known limitation, see DevPanel comment).
-      setBuildQueue(prev => ({ ...prev, [item.type]: { qty, completeAt } }))
+      const row = await addToShipQueue({
+        planetId: planet.id,
+        shipType: item.type,
+        qty,
+        cost,
+        buildSecondsPerShip,
+      })
+      setShipQueue(prev => [...prev, row])
     } catch (err) {
-      console.error('Build dispatch failed:', err)
-      alert(`Couldn't start build: ${err.message ?? 'unknown error'}. Reload to refresh state.`)
-      setResources(prev => ({
-        ...prev,
-        metal:     prev.metal + cost.metal,
-        crystal:   prev.crystal + cost.crystal,
-        deuterium: prev.deuterium + cost.deuterium,
-      }))
-      return
+      console.error('Add to ship queue failed:', err)
+      alert(`Couldn't queue: ${err.message ?? 'unknown error'}.`)
+    } finally {
+      setSubmitting(false)
     }
-
-    // Complete after timer (no on-mount completer for shipyard yet — TODO)
-    setTimeout(async () => {
-      try {
-        const existing = ships?.find(s => s.ship_type === item.type)
-        if (existing) {
-          await supabase.from('ships').update({
-            quantity: existing.quantity + qty,
-          }).eq('planet_id', planet.id).eq('ship_type', item.type)
-          setShips(prev => prev.map(s => s.ship_type === item.type
-            ? { ...s, quantity: s.quantity + qty }
-            : s
-          ))
-        } else {
-          await supabase.from('ships').insert({
-            planet_id: planet.id,
-            ship_type: item.type,
-            quantity: qty,
-          })
-          setShips(prev => [...(prev ?? []), { ship_type: item.type, quantity: qty }])
-        }
-      } catch (err) {
-        console.error('Build completion failed:', err)
-      } finally {
-        setBuildQueue(prev => { const n = { ...prev }; delete n[item.type]; return n })
-      }
-    }, buildTime * 1000)
   }
+
+  async function handleCancel(queueRowId) {
+    if (submitting) return
+    setSubmitting(true)
+    try {
+      await cancelShipQueue(queueRowId)
+      setShipQueue(prev => prev.filter(q => q.id !== queueRowId))
+    } catch (err) {
+      console.error('Cancel ship queue failed:', err)
+      alert(`Couldn't cancel: ${err.message ?? 'unknown error'}.`)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  // In-flight item label for QueuePanel: e.g. "Light Fighter · 12 / 50"
+  const inFlight = (() => {
+    if (!inFlightRow) return null
+    const meta = metaFor(inFlightRow.ship_type)
+    const completed = inFlightRow.ships_completed ?? 0
+    const total = inFlightRow.qty
+    // completeAt = started_at + (total × per-ship). Stored values in DB are
+    // canonical; we don't have the per-ship time on the row directly here so
+    // we rely on the DB/processor to tick ships_completed up. The countdown
+    // shown is the time to NEXT ship (best UX while sequential ships pop out).
+    const startedMs = new Date(inFlightRow.started_at).getTime()
+    const nextShipMs = startedMs + (completed + 1) * inFlightRow.build_seconds_per_ship * 1000
+    return {
+      icon: meta?.icon ?? '🚀',
+      label: `${meta?.name ?? inFlightRow.ship_type} · ${completed} / ${total}`,
+      completeAt: new Date(nextShipMs).toISOString(),
+    }
+  })()
+
+  const queue = queuedRows.map(q => {
+    const meta = metaFor(q.ship_type)
+    return {
+      id: q.id,
+      icon: meta?.icon ?? '🚀',
+      label: `${meta?.name ?? q.ship_type} × ${q.qty}`,
+      duration: q.build_seconds_per_ship * q.qty,
+      cost: { metal: q.cost_metal, crystal: q.cost_crystal, deuterium: q.cost_deuterium },
+    }
+  })
 
   const allItems = [...SHIPS, ...DEFENSES]
 
   return (
-    <div className="space-y-8 w-full">
-      <div className="flex items-center gap-3">
+    <div className="space-y-6 w-full">
+      <div className="flex items-center gap-3 flex-wrap">
         <Rocket size={20} className="text-cyan-400" />
         <h2 className="text-xl font-bold text-white">Shipyard</h2>
         <span className="text-xs text-gray-500">Shipyard Lv. {shipyardLvl}</span>
-        {Object.keys(buildQueue).length > 0 && (
+        {inFlightRow && (
           <span className="text-xs bg-cyan-900/50 border border-cyan-700 text-cyan-400 px-2 py-1 rounded-full">
-            {Object.keys(buildQueue).length} building
+            1 building
+          </span>
+        )}
+        {slotsFull && (
+          <span className="text-xs bg-yellow-900/50 border border-yellow-800 text-yellow-400 px-2 py-1 rounded-full">
+            queue full
           </span>
         )}
       </div>
+
+      <QueuePanel
+        title="Ship queue"
+        inFlight={inFlight}
+        queue={queue}
+        slotInfo={{
+          tiers: SHIP_SLOT_TIERS,
+          levels: { shipyard: shipyardLvl, robotics: roboticsLvl },
+          boughtSlots: 0,
+          used: slotsUsed,
+        }}
+        onCancel={handleCancel}
+        submitting={submitting}
+      />
 
       {shipyardLvl === 0 && (
         <div className="bg-yellow-900/20 border border-yellow-800/50 rounded-xl p-4 flex items-center gap-3">
@@ -294,12 +322,13 @@ export default function Shipyard({ planet, resources, buildings, research, ships
                 key={item.type}
                 item={item}
                 quantity={shipMap[item.type] ?? 0}
-                resources={resources}
+                available={available}
                 researchMap={researchMap}
                 shipyardLvl={shipyardLvl}
                 naniteLvl={naniteLvl}
-                onBuild={handleBuild}
-                building={buildQueue[item.type] ?? null}
+                onQueue={handleQueue}
+                slotsFull={slotsFull}
+                submitting={submitting}
               />
             ))}
           </div>

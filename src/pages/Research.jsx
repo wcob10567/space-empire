@@ -1,108 +1,109 @@
-import { useState, useEffect, useMemo } from 'react'
-import { supabase } from '../lib/supabase'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { FlaskConical, Clock, ChevronUp, Lock, AlertTriangle, X } from 'lucide-react'
 import { TECH_TREE, TECH_BRANCHES as BRANCHES } from '../data/techTree'
 import { TICK } from '../config/tick'
 import { queries } from '../services/queries'
-import { debitResources } from '../services/resources'
-
+import { addToResearchQueue, cancelResearchQueue, sumResearchReservationByPlanet } from '../services/researchQueue'
+import { completeResearchTech } from '../services/completion'
+import { useCompletionPoll } from '../hooks/useCompletionPoll'
+import { RESEARCH_SLOT_TIERS, countEarnedFreeSlots } from '../data/queueSlots'
+import { formatTime } from '../utils/format'
+import { scaleCost, computeDuration } from '../utils/formulas'
+import QueuePanel from '../components/QueuePanel'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-function getResearchCost(tech, currentLevel) {
-  const mult = Math.pow(1.75, currentLevel)
-  return {
-    metal:     Math.floor((tech.baseCost.metal ?? 0) * mult),
-    crystal:   Math.floor((tech.baseCost.crystal ?? 0) * mult),
-    deuterium: Math.floor((tech.baseCost.deuterium ?? 0) * mult),
-  }
-}
+const getResearchCost = (tech, currentLevel) => scaleCost(tech.baseCost, 1.75, currentLevel)
 
-function getResearchTime(cost, labLvl) {
-  const base = (cost.metal + cost.crystal) / 1000
-  const labFactor = Math.max(1, labLvl)
-  return Math.max(5, Math.floor(base / labFactor * 3600))
-}
+const getResearchTime = (cost, labLvl) => computeDuration({
+  cost,
+  divisor: 1000,
+  factor: labLvl,
+  minSeconds: 5,
+  // research historically didn't apply dev-speed; preserving that parity.
+})
 
-function formatTime(seconds) {
-  if (seconds <= 0) return 'Complete!'
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  const s = seconds % 60
-  if (h > 0) return `${h}h ${m}m ${s}s`
-  if (m > 0) return `${m}m ${s}s`
-  return `${s}s`
-}
-
-// Per-planet feasibility check used by the picker and visual-state logic
-function planetCanResearch(tech, cost, planetBuildings, planetResources) {
+// Per-planet feasibility: lab level + AVAILABLE resources (balance − reservation
+// FOR THAT PLANET). The picker shows planets where the user can fund the cost
+// after subtracting the queue reservation already against that planet.
+function planetCanResearch(tech, cost, planetBuildings, planetResources, planetReservation) {
   const labLvl = planetBuildings?.find(b => b.building_type === 'research_lab')?.level ?? 0
   if (labLvl < (tech.requires.lab ?? 0)) {
     return { ok: false, msg: `Need Research Lab Lv. ${tech.requires.lab}`, labLvl }
   }
-  if (cost.metal > (planetResources?.metal ?? 0)) {
-    return { ok: false, msg: `Short ${(cost.metal - (planetResources?.metal ?? 0)).toLocaleString()} metal`, labLvl }
+  const av = {
+    metal:     (planetResources?.metal     ?? 0) - (planetReservation?.metal     ?? 0),
+    crystal:   (planetResources?.crystal   ?? 0) - (planetReservation?.crystal   ?? 0),
+    deuterium: (planetResources?.deuterium ?? 0) - (planetReservation?.deuterium ?? 0),
   }
-  if (cost.crystal > (planetResources?.crystal ?? 0)) {
-    return { ok: false, msg: `Short ${(cost.crystal - (planetResources?.crystal ?? 0)).toLocaleString()} crystal`, labLvl }
-  }
-  if (cost.deuterium > (planetResources?.deuterium ?? 0)) {
-    return { ok: false, msg: `Short ${(cost.deuterium - (planetResources?.deuterium ?? 0)).toLocaleString()} deuterium`, labLvl }
-  }
+  if (cost.metal     > av.metal)     return { ok: false, msg: `Short ${(cost.metal     - av.metal    ).toLocaleString()} metal`,     labLvl }
+  if (cost.crystal   > av.crystal)   return { ok: false, msg: `Short ${(cost.crystal   - av.crystal  ).toLocaleString()} crystal`,   labLvl }
+  if (cost.deuterium > av.deuterium) return { ok: false, msg: `Short ${(cost.deuterium - av.deuterium).toLocaleString()} deuterium`, labLvl }
   return { ok: true, msg: null, labLvl }
 }
 
-// Compute the per-tech visual state given the active planet + every planet's data.
-// State machine:
-//   researching → handled separately by caller
-//   available    → active planet has lab + resources (cyan border, click researches from active)
-//   almost_ready → active CAN'T but at least one other planet CAN (yellow border, click opens picker)
-//   locked       → no planet can research it yet (gray border, button disabled)
-function getTechVisualState({ tech, level, researchMap, multiPlanet, activeBuildings, activeResources, activePlanetId, planets, livePlanetData }) {
-  const cost = getResearchCost(tech, level)
+// effectiveLevel = stored level + queued count + (1 if currently researching the row).
+// Cost preview at queue time uses effectiveLevel so a 2nd queue entry for the
+// same tech costs the post-1st-queue level.
+function effectiveResearchLevel(techType, researchMap, queueRows) {
+  const base = researchMap[techType] ?? 0
+  const isResearchingThis = (researchMap[`__researching__${techType}`] ?? false) ? 1 : 0
+  const queuedThis = (queueRows ?? []).filter(q => q.tech_type === techType).length
+  return base + isResearchingThis + queuedThis
+}
 
-  // Tech prereqs are account-wide → if missing, locked everywhere
+// Visual state for a tech row. State:
+//   researching   → handled by caller (data.is_researching)
+//   queued        → at least one row in research_queue for this tech
+//   available     → active planet has lab + available resources
+//   almost_ready  → multi-planet AND another planet meets the bar
+//   locked        → no planet can fund / lab too low / prereqs missing
+function getTechVisualState({
+  tech, researchMap, queueRows,
+  multiPlanet, activeBuildings, activeResources, activeReservation,
+  activePlanetId, planets, livePlanetData, reservationByPlanet,
+}) {
+  const effLvl = effectiveResearchLevel(tech.type, researchMap, queueRows)
+  const cost = getResearchCost(tech, effLvl)
+
   for (const [reqType, reqLvl] of Object.entries(tech.requires)) {
     if (reqType === 'lab') continue
     if ((researchMap[reqType] ?? 0) < reqLvl) {
       const reqTech = Object.values(TECH_TREE).flat().find(t => t.type === reqType)
-      return { state: 'locked', msg: `Need ${reqTech?.name ?? reqType} Lv. ${reqLvl}`, cost }
+      return { state: 'locked', msg: `Need ${reqTech?.name ?? reqType} Lv. ${reqLvl}`, cost, effLvl }
     }
   }
 
-  // Active planet check
-  const activeCheck = planetCanResearch(tech, cost, activeBuildings, activeResources)
-  if (activeCheck.ok) return { state: 'available', msg: null, cost }
+  const activeCheck = planetCanResearch(tech, cost, activeBuildings, activeResources, activeReservation)
+  if (activeCheck.ok) return { state: 'available', msg: null, cost, effLvl }
 
-  // Single-planet → no fallback, locked
   if (!multiPlanet) {
-    return { state: 'locked', msg: activeCheck.msg, cost }
+    return { state: 'locked', msg: activeCheck.msg, cost, effLvl }
   }
 
-  // Multi-planet → does any OTHER planet meet the bar?
   const anyOtherViable = (planets ?? []).some(p => {
     if (p.id === activePlanetId) return false
     const data = livePlanetData?.[p.id]
     if (!data?.resources) return false
-    return planetCanResearch(tech, cost, data.buildings, data.resources).ok
+    const otherRes = reservationByPlanet?.[p.id] ?? { metal: 0, crystal: 0, deuterium: 0 }
+    return planetCanResearch(tech, cost, data.buildings, data.resources, otherRes).ok
   })
 
   if (anyOtherViable) {
-    return { state: 'almost_ready', msg: 'Available on another planet', cost }
+    return { state: 'almost_ready', msg: 'Available on another planet', cost, effLvl }
   }
 
-  // No planet viable. Pick the most useful message.
   const maxLab = Math.max(0, ...((planets ?? []).map(p => {
     const data = livePlanetData?.[p.id]
     return data?.buildings?.find(b => b.building_type === 'research_lab')?.level ?? 0
   })))
   if (maxLab < (tech.requires.lab ?? 0)) {
-    return { state: 'locked', msg: `Need Research Lab Lv. ${tech.requires.lab}`, cost }
+    return { state: 'locked', msg: `Need Research Lab Lv. ${tech.requires.lab}`, cost, effLvl }
   }
-  return { state: 'locked', msg: 'Insufficient resources', cost }
+  return { state: 'locked', msg: 'Insufficient resources', cost, effLvl }
 }
 
 // ─── Planet Picker Modal ─────────────────────────────────────────────────────
-function PlanetPickerModal({ tech, cost, currentLevel, planets, planetData, onConfirm, onClose }) {
+function PlanetPickerModal({ tech, cost, currentLevel, planets, planetData, reservationByPlanet, onConfirm, onClose }) {
   const sorted = [...(planets ?? [])].sort((a, b) => {
     const aLab = planetData[a.id]?.buildings?.find(x => x.building_type === 'research_lab')?.level ?? 0
     const bLab = planetData[b.id]?.buildings?.find(x => x.building_type === 'research_lab')?.level ?? 0
@@ -135,7 +136,7 @@ function PlanetPickerModal({ tech, cost, currentLevel, planets, planetData, onCo
             <X size={18} />
           </button>
         </div>
-        <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Research from:</p>
+        <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Queue from:</p>
         <div className="space-y-2">
           {sorted.map(p => {
             const data = planetData[p.id]
@@ -146,13 +147,14 @@ function PlanetPickerModal({ tech, cost, currentLevel, planets, planetData, onCo
                 </div>
               )
             }
-            const check = planetCanResearch(tech, cost, data.buildings, data.resources)
+            const planetReservation = reservationByPlanet?.[p.id] ?? { metal: 0, crystal: 0, deuterium: 0 }
+            const check = planetCanResearch(tech, cost, data.buildings, data.resources, planetReservation)
             const time = getResearchTime(cost, check.labLvl)
             return (
               <button
                 key={p.id}
                 disabled={!check.ok}
-                onClick={() => onConfirm(p, data.resources, data.buildings)}
+                onClick={() => onConfirm(p, time)}
                 className={`w-full text-left border rounded-lg p-3 transition-all ${
                   check.ok
                     ? 'border-cyan-800 bg-gray-900 hover:border-cyan-600 hover:bg-cyan-950/30 cursor-pointer'
@@ -187,12 +189,11 @@ function PlanetPickerModal({ tech, cost, currentLevel, planets, planetData, onCo
 }
 
 // ─── TechNode Component ──────────────────────────────────────────────────────
-function TechNode({ tech, level, isResearching, researchCompleteAt, visualState, resources, onResearch, anyResearching, isLast }) {
+function TechNode({ tech, level, isResearching, researchCompleteAt, queuedCount, visualState, onResearch, slotsFull, submitting, isLast }) {
   const [timeLeft, setTimeLeft] = useState(0)
-  const { state, msg, cost } = visualState
+  const { state, msg, cost, effLvl } = visualState
   const isLocked = !isResearching && state === 'locked'
   const isAlmostReady = !isResearching && state === 'almost_ready'
-  const isAvailable = !isResearching && state === 'available'
 
   useEffect(() => {
     if (!isResearching || !researchCompleteAt) return
@@ -204,6 +205,9 @@ function TechNode({ tech, level, isResearching, researchCompleteAt, visualState,
     const interval = setInterval(tick, 1000)
     return () => clearInterval(interval)
   }, [isResearching, researchCompleteAt])
+
+  const targetLvl = effLvl + 1
+  const buttonDisabled = isLocked || slotsFull || submitting
 
   const borderClass = isResearching   ? 'border-cyan-500 bg-cyan-950/30' :
                       isLocked        ? 'border-gray-800 bg-gray-900/50 opacity-60' :
@@ -230,6 +234,9 @@ function TechNode({ tech, level, isResearching, researchCompleteAt, visualState,
           <div className="text-right shrink-0">
             <span className="text-xs text-gray-600">Lv.</span>
             <p className={`text-lg font-bold ${level > 0 ? 'text-cyan-400' : 'text-gray-600'}`}>{level}</p>
+            {queuedCount > 0 && (
+              <p className="text-xs text-yellow-400">+{queuedCount} queued</p>
+            )}
           </div>
         </div>
 
@@ -246,38 +253,19 @@ function TechNode({ tech, level, isResearching, researchCompleteAt, visualState,
               <span className="text-gray-600 text-xs">{msg}</span>
             </div>
             <div className="flex flex-wrap gap-2 text-xs">
-              {cost.metal > 0     && <span className={cost.metal > (resources?.metal ?? 0)         ? 'text-red-400/60' : 'text-gray-600'}>⛏️ {cost.metal.toLocaleString()}</span>}
-              {cost.crystal > 0   && <span className={cost.crystal > (resources?.crystal ?? 0)     ? 'text-red-400/60' : 'text-gray-600'}>💎 {cost.crystal.toLocaleString()}</span>}
-              {cost.deuterium > 0 && <span className={cost.deuterium > (resources?.deuterium ?? 0) ? 'text-red-400/60' : 'text-gray-600'}>🔵 {cost.deuterium.toLocaleString()}</span>}
+              {cost.metal > 0     && <span className="text-gray-600">⛏️ {cost.metal.toLocaleString()}</span>}
+              {cost.crystal > 0   && <span className="text-gray-600">💎 {cost.crystal.toLocaleString()}</span>}
+              {cost.deuterium > 0 && <span className="text-gray-600">🔵 {cost.deuterium.toLocaleString()}</span>}
             </div>
-          </div>
-        ) : isAlmostReady ? (
-          <div className="space-y-2">
-            <div className="flex items-center gap-2 bg-yellow-900/20 border border-yellow-800/50 rounded-lg p-2">
-              <AlertTriangle size={12} className="text-yellow-500 shrink-0" />
-              <span className="text-yellow-500 text-xs">{msg}</span>
-            </div>
-            <div className="flex flex-wrap gap-2 text-xs">
-              {cost.metal > 0     && <span className={cost.metal > (resources?.metal ?? 0)         ? 'text-red-400' : 'text-gray-500'}>⛏️ {cost.metal.toLocaleString()}</span>}
-              {cost.crystal > 0   && <span className={cost.crystal > (resources?.crystal ?? 0)     ? 'text-red-400' : 'text-gray-500'}>💎 {cost.crystal.toLocaleString()}</span>}
-              {cost.deuterium > 0 && <span className={cost.deuterium > (resources?.deuterium ?? 0) ? 'text-red-400' : 'text-gray-500'}>🔵 {cost.deuterium.toLocaleString()}</span>}
-            </div>
-            <button
-              onClick={() => onResearch(tech, cost)}
-              disabled={anyResearching}
-              className={`w-full flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-semibold transition-all ${
-                !anyResearching
-                  ? 'bg-yellow-800 hover:bg-yellow-700 text-yellow-100'
-                  : 'bg-gray-800 text-gray-600 cursor-not-allowed'
-              }`}
-            >
-              <ChevronUp size={14} />
-              Research Lv. {level + 1}
-            </button>
           </div>
         ) : (
-          /* available */
           <div className="space-y-2">
+            {isAlmostReady && (
+              <div className="flex items-center gap-2 bg-yellow-900/20 border border-yellow-800/50 rounded-lg p-2">
+                <AlertTriangle size={12} className="text-yellow-500 shrink-0" />
+                <span className="text-yellow-500 text-xs">{msg}</span>
+              </div>
+            )}
             <div className="flex flex-wrap gap-2 text-xs">
               {cost.metal > 0     && <span className="text-gray-400">⛏️ {cost.metal.toLocaleString()}</span>}
               {cost.crystal > 0   && <span className="text-gray-400">💎 {cost.crystal.toLocaleString()}</span>}
@@ -285,15 +273,21 @@ function TechNode({ tech, level, isResearching, researchCompleteAt, visualState,
             </div>
             <button
               onClick={() => onResearch(tech, cost)}
-              disabled={anyResearching}
+              disabled={buttonDisabled}
+              title={
+                slotsFull ? 'Research queue is full' :
+                undefined
+              }
               className={`w-full flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-semibold transition-all ${
-                !anyResearching
-                  ? 'bg-cyan-700 hover:bg-cyan-600 text-white'
+                !buttonDisabled
+                  ? (isAlmostReady
+                      ? 'bg-yellow-800 hover:bg-yellow-700 text-yellow-100'
+                      : 'bg-cyan-700 hover:bg-cyan-600 text-white')
                   : 'bg-gray-800 text-gray-600 cursor-not-allowed'
               }`}
             >
               <ChevronUp size={14} />
-              Research Lv. {level + 1}
+              Queue Lv. {targetLvl}
             </button>
           </div>
         )}
@@ -307,9 +301,12 @@ function TechNode({ tech, level, isResearching, researchCompleteAt, visualState,
 }
 
 // ─── Main Research Page ──────────────────────────────────────────────────────
-export default function Research({ planet, planets, resources, buildings, research, setResearch, setResources }) {
-  const [researching, setResearching] = useState(false)
-  const [picker, setPicker] = useState(null)        // { tech, cost, currentLevel } when modal open
+export default function Research({
+  planet, planets, resources, buildings, research, setResearch,
+  researchQueue, setResearchQueue, reservation,
+}) {
+  const [submitting, setSubmitting] = useState(false)
+  const [picker, setPicker] = useState(null)        // { tech, cost, currentLevel, effLvl } when modal open
   const [planetData, setPlanetData] = useState({})  // { [planetId]: { buildings, resources } } — server snapshot
 
   const labLvl = buildings?.find(b => b.building_type === 'research_lab')?.level ?? 0
@@ -317,53 +314,61 @@ export default function Research({ planet, planets, resources, buildings, resear
   const multiPlanet = (planets?.length ?? 0) > 1
 
   const researchMap = {}
-  research?.forEach(r => { researchMap[r.tech_type] = r.level })
+  research?.forEach(r => {
+    researchMap[r.tech_type] = r.level
+    if (r.is_researching) researchMap[`__researching__${r.tech_type}`] = true
+  })
 
-  // Active planet's data is always live (resources tick locally); other planets come from the
-  // 5s server snapshot. Merge so getTechVisualState always sees the freshest active values.
+  // Slot count: research is account-wide, max-across-planets levels for slot tier checks.
+  const labLevels = (planets ?? []).map(p => {
+    const data = planet?.id === p.id ? { buildings } : planetData[p.id]
+    return data?.buildings?.find(b => b.building_type === 'research_lab')?.level ?? 0
+  })
+  const roboticsLevels = (planets ?? []).map(p => {
+    const data = planet?.id === p.id ? { buildings } : planetData[p.id]
+    return data?.buildings?.find(b => b.building_type === 'robotics_factory')?.level ?? 0
+  })
+  const maxResearchLab = Math.max(0, labLvl, ...labLevels)
+  const maxRobotics    = Math.max(0, ...roboticsLevels)
+
+  const maxSlots = countEarnedFreeSlots(RESEARCH_SLOT_TIERS, { researchLab: maxResearchLab, robotics: maxRobotics })
+  const queueLen = researchQueue?.length ?? 0
+  const slotsUsed = (anyResearching ? 1 : 0) + queueLen
+  const slotsFull = slotsUsed >= maxSlots
+
+  // Per-planet reservation map (research costs only — building/ship reservations
+  // are summed against resources separately by App.jsx for the active planet).
+  const researchReservationByPlanet = useMemo(
+    () => sumResearchReservationByPlanet(researchQueue),
+    [researchQueue]
+  )
+
+  // Active planet's reservation = the App-level reservation that's already
+  // been merged for this planet (build + ship + research).
+  const activeReservation = reservation ?? { metal: 0, crystal: 0, deuterium: 0 }
+
+  // Live snapshot: active planet uses fresh state, other planets use 5s server poll.
   const livePlanetData = useMemo(() => {
     if (!planet) return planetData
     return { ...planetData, [planet.id]: { buildings: buildings ?? [], resources } }
   }, [planetData, planet, buildings, resources])
 
-  // Catch any research whose timer expired — runs on mount AND every 2s while on the page,
-  // so a missed setTimeout (tab throttled, page reloaded, etc.) doesn't leave research stuck.
-  useEffect(() => {
-    let cancelled = false
-    async function checkCompleted() {
-      if (cancelled || !research?.length) return
-      const now = new Date()
-      const expired = research.filter(
-        r => r.is_researching && r.research_complete_at && new Date(r.research_complete_at) <= now
-      )
-      for (const r of expired) {
-        if (cancelled) return
-        const { error } = await supabase.from('research').update({
-          level: r.level + 1,
-          is_researching: false,
-          research_complete_at: null,
-        })
-          .eq('id', r.id)
-          .eq('is_researching', true)  // guard against double-fire from a stale setTimeout
-        if (error) continue
-        setResearch(prev => prev.map(pr =>
-          pr.tech_type === r.tech_type && pr.is_researching
-            ? { ...pr, level: pr.level + 1, is_researching: false, research_complete_at: null }
-            : pr
-        ))
-      }
-      // Release the local dispatch lock once anything finishes — otherwise a
-      // speed-shrink that completes via this interval would leave the page-local
-      // `researching` flag stuck until the original setTimeout fires.
-      if (expired.length > 0) setResearching(false)
-    }
-    checkCompleted()
-    const interval = setInterval(checkCompleted, TICK.COMPLETION_POLL_MS)
-    return () => { cancelled = true; clearInterval(interval) }
-  }, [research, setResearch])
+  // 2s completion check (catches missed setTimeouts after speed change / reload).
+  // Uses tech_type as matchKey because research is keyed account-wide on it.
+  const completeResearch = useCallback(
+    (id, level) => completeResearchTech(id, level),
+    []
+  )
+  useCompletionPoll({
+    items: research,
+    setItems: setResearch,
+    flagKey: 'is_researching',
+    completeAtKey: 'research_complete_at',
+    complete: completeResearch,
+    matchKey: 'tech_type',
+  })
 
-  // Multi-planet: poll every 5s for all planets' building+resource snapshot.
-  // Used by the visual-state logic AND by the picker.
+  // Multi-planet poll (every 5s) — used by visual state + picker
   useEffect(() => {
     if (!multiPlanet || !planets?.length) return
     let cancelled = false
@@ -388,141 +393,94 @@ export default function Research({ planet, planets, resources, buildings, resear
     return () => { cancelled = true; clearInterval(interval) }
   }, [multiPlanet, planets])
 
-  // Click → decide modal vs direct research.
-  // Bypass the modal only when the ACTIVE planet is the only viable one (per earlier UX call).
-  // Otherwise (active not viable but others are, or 2+ viable) show the modal so the user
-  // explicitly confirms which planet they're researching from.
-  async function onResearchClick(tech, cost) {
-    if (anyResearching || researching) return
+  function onResearchClick(tech, cost) {
+    if (slotsFull || submitting) return
     const currentLevel = researchMap[tech.type] ?? 0
+    const effLvl = effectiveResearchLevel(tech.type, researchMap, researchQueue)
 
     if (!multiPlanet) {
-      handleResearch(tech, cost, planet, resources, buildings)
+      handleQueue(tech, cost, planet, getResearchTime(cost, labLvl))
       return
     }
 
-    // Use the live snapshot (already kept fresh by the polling effect above)
+    // Use the live snapshot
     const activeData = livePlanetData[planet?.id] ?? { buildings, resources }
-    const activeViable = planetCanResearch(tech, cost, activeData.buildings, activeData.resources).ok
+    const activeReservation = researchReservationByPlanet[planet?.id] ?? { metal: 0, crystal: 0, deuterium: 0 }
+    const activeViable = planetCanResearch(tech, cost, activeData.buildings, activeData.resources, activeReservation).ok
 
     const viable = planets.filter(p => {
       const data = livePlanetData[p.id]
       if (!data?.resources) return false
-      return planetCanResearch(tech, cost, data.buildings, data.resources).ok
+      const planetRes = researchReservationByPlanet[p.id] ?? { metal: 0, crystal: 0, deuterium: 0 }
+      return planetCanResearch(tech, cost, data.buildings, data.resources, planetRes).ok
     })
 
     if (activeViable && viable.length === 1) {
-      // Active is the only viable → research directly, no modal
-      handleResearch(tech, cost, planet, resources, buildings)
+      handleQueue(tech, cost, planet, getResearchTime(cost, labLvl))
       return
     }
 
-    // Otherwise: 2+ viable, or active isn't viable but another is → show modal
-    setPicker({ tech, cost, currentLevel })
+    setPicker({ tech, cost, currentLevel, effLvl })
   }
 
-  async function handleResearch(tech, cost, targetPlanet, targetResources, targetBuildings) {
-    if (!targetPlanet || researching) return
-    setResearching(true)
+  async function handleQueue(tech, cost, sourcePlanet, researchSeconds) {
+    if (!sourcePlanet || submitting) return
+    setSubmitting(true)
     setPicker(null)
 
-    const targetLabLvl = targetBuildings?.find(b => b.building_type === 'research_lab')?.level ?? 0
-    const researchTime = getResearchTime(cost, targetLabLvl)
-    const completeAt = new Date(Date.now() + researchTime * 1000).toISOString()
-    const isActivePlanet = targetPlanet.id === planet?.id
-
     try {
-      if (isActivePlanet) {
-        setResources(prev => prev ? ({
-          ...prev,
-          metal:     prev.metal - cost.metal,
-          crystal:   prev.crystal - cost.crystal,
-          deuterium: prev.deuterium - (cost.deuterium ?? 0),
-        }) : prev)
-      }
-
-      const existing = research?.find(r => r.tech_type === tech.type)
-      if (existing) {
-        const { error } = await supabase.from('research').update({
-          is_researching: true,
-          research_complete_at: completeAt,
-        }).eq('id', existing.id)
-        if (error) throw error
-      } else {
-        const { error } = await supabase.from('research').insert({
-          owner_id: targetPlanet.owner_id,
-          tech_type: tech.type,
-          level: 0,
-          is_researching: true,
-          research_complete_at: completeAt,
-        })
-        if (error) throw error
-      }
-
-      await debitResources(targetPlanet.id, targetResources, cost)
-
-      setResearch(prev => {
-        const exists = prev?.find(r => r.tech_type === tech.type)
-        if (exists) {
-          return prev.map(r => r.tech_type === tech.type
-            ? { ...r, is_researching: true, research_complete_at: completeAt }
-            : r
-          )
-        }
-        return [...(prev ?? []), { tech_type: tech.type, level: 0, is_researching: true, research_complete_at: completeAt }]
+      const row = await addToResearchQueue({
+        ownerId: sourcePlanet.owner_id,
+        techType: tech.type,
+        sourcePlanetId: sourcePlanet.id,
+        cost,
+        researchSeconds,
       })
+      setResearchQueue(prev => [...prev, row])
     } catch (err) {
-      console.error('Research dispatch failed:', err)
-      alert(`Couldn't start research: ${err.message ?? 'unknown error'}. Reload to refresh state.`)
-      // Refund the optimistic deduct on the active planet (other planets weren't optimistically updated)
-      if (isActivePlanet) {
-        setResources(prev => prev ? ({
-          ...prev,
-          metal:     prev.metal + cost.metal,
-          crystal:   prev.crystal + cost.crystal,
-          deuterium: prev.deuterium + (cost.deuterium ?? 0),
-        }) : prev)
-      }
-      setResearching(false)
-      return
+      console.error('Add to research queue failed:', err)
+      alert(`Couldn't queue: ${err.message ?? 'unknown error'}.`)
+    } finally {
+      setSubmitting(false)
     }
-
-    // Complete after timer. Guarded with `.eq('is_researching', true)` so if the
-    // 2s interval completer (or DevPanel speed change) already finished it first,
-    // this stale fire is a no-op rather than a double-increment. We also re-read
-    // the row instead of relying on the stale `researchMap` closure.
-    setTimeout(async () => {
-      try {
-        const { data: row } = await supabase
-          .from('research')
-          .select('id, level')
-          .eq('owner_id', targetPlanet.owner_id)
-          .eq('tech_type', tech.type)
-          .eq('is_researching', true)
-          .maybeSingle()
-
-        if (row) {
-          const { error } = await supabase.from('research').update({
-            level: row.level + 1,
-            is_researching: false,
-            research_complete_at: null,
-          })
-            .eq('id', row.id)
-            .eq('is_researching', true)
-          if (!error) {
-            setResearch(prev => prev.map(r => r.tech_type === tech.type && r.is_researching
-              ? { ...r, level: r.level + 1, is_researching: false, research_complete_at: null }
-              : r
-            ))
-          }
-        }
-      } catch (err) {
-        console.error('Research completion failed:', err)
-      } finally {
-        setResearching(false)
-      }
-    }, researchTime * 1000)
   }
+
+  async function handleCancel(queueRowId) {
+    if (submitting) return
+    setSubmitting(true)
+    try {
+      await cancelResearchQueue(queueRowId)
+      setResearchQueue(prev => prev.filter(q => q.id !== queueRowId))
+    } catch (err) {
+      console.error('Cancel research queue failed:', err)
+      alert(`Couldn't cancel: ${err.message ?? 'unknown error'}.`)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  // Build inFlight + queue items for QueuePanel
+  const activeResearch = research?.find(r => r.is_researching) ?? null
+  const inFlight = activeResearch ? (() => {
+    const tech = Object.values(TECH_TREE).flat().find(t => t.type === activeResearch.tech_type)
+    return {
+      icon: tech?.icon ?? '🔬',
+      label: `${tech?.name ?? activeResearch.tech_type} → Lv. ${activeResearch.level + 1}`,
+      completeAt: activeResearch.research_complete_at,
+    }
+  })() : null
+
+  const queue = (researchQueue ?? []).map(q => {
+    const tech = Object.values(TECH_TREE).flat().find(t => t.type === q.tech_type)
+    const sourcePlanet = planets?.find(p => p.id === q.source_planet_id)
+    return {
+      id: q.id,
+      icon: tech?.icon ?? '🔬',
+      label: `${tech?.name ?? q.tech_type}${sourcePlanet ? ` · from ${sourcePlanet.name}` : ''}`,
+      duration: q.research_seconds,
+      cost: { metal: q.cost_metal, crystal: q.cost_crystal, deuterium: q.cost_deuterium },
+    }
+  })
 
   return (
     <div className="space-y-4 w-full">
@@ -531,7 +489,7 @@ export default function Research({ planet, planets, resources, buildings, resear
         <h2 className="text-xl font-bold text-white">Research</h2>
         <span className="text-xs text-gray-500">
           {multiPlanet
-            ? `${planets.length} planets · pick one when researching`
+            ? `${planets.length} planets · pick one when queuing`
             : `Research Lab Lv. ${labLvl}`}
         </span>
         {anyResearching && (
@@ -539,7 +497,26 @@ export default function Research({ planet, planets, resources, buildings, resear
             1 researching
           </span>
         )}
+        {slotsFull && (
+          <span className="text-xs bg-yellow-900/50 border border-yellow-800 text-yellow-400 px-2 py-1 rounded-full">
+            queue full
+          </span>
+        )}
       </div>
+
+      <QueuePanel
+        title="Research queue"
+        inFlight={inFlight}
+        queue={queue}
+        slotInfo={{
+          tiers: RESEARCH_SLOT_TIERS,
+          levels: { researchLab: maxResearchLab, robotics: maxRobotics },
+          boughtSlots: 0,
+          used: slotsUsed,
+        }}
+        onCancel={handleCancel}
+        submitting={submitting}
+      />
 
       <div className="flex flex-wrap gap-4 text-xs text-gray-500">
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-cyan-600 inline-block" /> Available</span>
@@ -559,14 +536,18 @@ export default function Research({ planet, planets, resources, buildings, resear
             {TECH_TREE[branch].map((tech, i) => {
               const data = research?.find(r => r.tech_type === tech.type)
               const level = data?.level ?? 0
+              const queuedCount = (researchQueue ?? []).filter(q => q.tech_type === tech.type).length
               const visualState = getTechVisualState({
-                tech, level, researchMap,
+                tech, researchMap,
+                queueRows: researchQueue,
                 multiPlanet,
                 activeBuildings: buildings,
                 activeResources: resources,
+                activeReservation,
                 activePlanetId: planet?.id,
                 planets,
                 livePlanetData,
+                reservationByPlanet: researchReservationByPlanet,
               })
               return (
                 <TechNode
@@ -575,10 +556,11 @@ export default function Research({ planet, planets, resources, buildings, resear
                   level={level}
                   isResearching={data?.is_researching ?? false}
                   researchCompleteAt={data?.research_complete_at}
+                  queuedCount={queuedCount}
                   visualState={visualState}
-                  resources={resources}
                   onResearch={onResearchClick}
-                  anyResearching={anyResearching || researching}
+                  slotsFull={slotsFull}
+                  submitting={submitting}
                   isLast={i === TECH_TREE[branch].length - 1}
                 />
               )
@@ -591,10 +573,11 @@ export default function Research({ planet, planets, resources, buildings, resear
         <PlanetPickerModal
           tech={picker.tech}
           cost={picker.cost}
-          currentLevel={picker.currentLevel}
+          currentLevel={picker.effLvl}
           planets={planets}
           planetData={livePlanetData}
-          onConfirm={(p, res, bld) => handleResearch(picker.tech, picker.cost, p, res, bld)}
+          reservationByPlanet={researchReservationByPlanet}
+          onConfirm={(p, time) => handleQueue(picker.tech, picker.cost, p, time)}
           onClose={() => setPicker(null)}
         />
       )}
